@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -49,9 +50,23 @@ def _find_tesseract(explicit: str = "") -> str:
     raise RuntimeError("Tesseract本体が見つかりません。READMEのTesseract導入手順を確認してください。")
 
 
+def user_tessdata_dir() -> Path:
+    """Per-user language data folder that setup.ps1 downloads into (no admin rights needed)."""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return Path(base) / "EbookTextStudio" / "tessdata"
+
+
+def _use_user_tessdata() -> None:
+    """Point Tesseract at the per-user data folder when it holds the base languages."""
+    folder = user_tessdata_dir()
+    if (folder / "eng.traineddata").is_file() and (folder / "jpn.traineddata").is_file():
+        os.environ["TESSDATA_PREFIX"] = str(folder)
+
+
 def _check_tesseract(opts: OCROptions) -> None:
     import pytesseract
 
+    _use_user_tessdata()
     pytesseract.pytesseract.tesseract_cmd = _find_tesseract(opts.tesseract_exe)
     available = set(pytesseract.get_languages(config=""))
     missing = [l for l in opts.lang.split("+") if l not in available]
@@ -75,7 +90,12 @@ def _check_ndl_command(command: str) -> list[str]:
     if not command:
         raise RuntimeError("NDLOCR-Liteのコマンド欄を指定してください。")
     if command.lower().endswith(".py") and Path(command).is_file():
-        import sys
+        if getattr(sys, "frozen", False):
+            # sys.executable is the packaged exe, so a separate Python is needed to run ocr.py.
+            python = shutil.which("py") or shutil.which("python")
+            if not python:
+                raise RuntimeError("exe版でNDLOCR-Liteのocr.pyを使うにはPythonが必要です。ndlocr-liteコマンドを指定してください。")
+            return [python, command]
         return [sys.executable, command]
     if Path(command).is_file() or shutil.which(command):
         return [command]

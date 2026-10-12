@@ -21,11 +21,25 @@ Windows上に**実際に表示されているページ**を、通常のページ
 
 ## ダウンロード後のセットアップ（Windows 10/11）
 
-1. ZIPを「すべて展開」し、`setup.bat` を実行してください。Python 3.11〜3.13が必要です。ない場合は **Python 3.12（python.org）** をインストールしてから再実行します。セットアップは専用の `.venv` を自動作成し、画面キャプチャ・OCR補助用のPythonライブラリをインストールします。
-2. Tesseract OCR（**別途インストール必須**）をWindows Terminalで `winget install -e --id UB-Mannheim.TesseractOCR` などにより導入してください。インストール時に `Japanese (jpn)` と `English (eng)` の言語データを入れます。既定のインストールパスは `C:\Program Files\Tesseract-OCR\tesseract.exe`。`jpn_vert` は縦書き日本語をTesseractで読む際に便利です（言語欄に`jpn_vert+eng`）。
-3. `run.bat` をダブルクリックしてGUIを起動します。
+### 方法A: `setup.bat` で自動セットアップ（ソース版）
 
-Tesseractの詳しい導入元: <https://github.com/UB-Mannheim/tesseract/wiki> 。wingetから日本語データが入らなかった場合は、対応する `jpn.traineddata` / `eng.traineddata` をインストール先の `tessdata` に入れてください。言語が欠けている場合はGUIが不足言語を表示します。
+1. ZIPを「すべて展開」し、`setup.bat` をダブルクリックします。次を自動で行います（インターネット接続とwingetが必要。許可を求める画面が出る場合があります）。
+   - Python 3.11〜3.13がなければ `winget` で Python 3.12 を導入
+   - 専用の `.venv` を作成し、必要なライブラリをインストール
+   - Tesseract OCRがなければ `winget` で導入
+   - 言語データ（`eng` / `jpn` / `jpn_vert` / `osd`）を `%LOCALAPPDATA%\EbookTextStudio\tessdata` にダウンロード（管理者権限不要）。アプリは自動でこの場所を使います
+   - デスクトップとスタートメニューに「EbookText Studio」のショートカットを作成（不要なら `setup.bat -NoShortcut`）
+2. ショートカット、または `run.bat` からGUIを起動します。
+
+wingetが使えない環境では、Python 3.12（python.org）とTesseract（<https://github.com/UB-Mannheim/tesseract/wiki>）を手動で導入してください。
+
+### 方法B: exe版（Python不要）
+
+`build_exe.bat` を実行すると `dist\EbookTextStudio\EbookTextStudio.exe`（と配布用ZIP）が作成されます（ビルドには先に `setup.bat` が必要）。exe版を使う側は、フォルダ内の `install_ocr.bat` を一度実行してTesseractと言語データを導入し、`EbookTextStudio.exe` を起動します。exe版でNDLOCR-Liteの `src/ocr.py` を指定する場合はPythonが別途必要です（`ndlocr-lite` コマンドの指定を推奨）。
+
+> **注意:** 自動セットアップ（`setup.bat` / `install_ocr.bat`）とexe版は、Windows実機でまだ検証していません。うまく動かない場合はエラー表示を添えて報告してください。
+
+Tesseractの詳しい導入元: <https://github.com/UB-Mannheim/tesseract/wiki> 。日本語データが入らなかった場合は、`jpn.traineddata` / `eng.traineddata` を `%LOCALAPPDATA%\EbookTextStudio\tessdata`（または Tesseract の `tessdata`）に入れてください。言語が欠けている場合はGUIが不足言語を表示します。
 
 ## 画面キャプチャ → OCR
 
