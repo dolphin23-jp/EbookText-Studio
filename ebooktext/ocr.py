@@ -20,6 +20,7 @@ from typing import Callable
 import fitz
 from PIL import Image
 
+from .textclean import clean_pages, render_review, review_lines
 from .core import (_write_json_atomic, file_sha256, normalize_text, page_images,
                    prepare_ocr, render_markdown, replacements_load, save_manifest)
 
@@ -35,6 +36,7 @@ class OCROptions:
     prefer_native_pdf: bool = True
     ndl_command: str = "ndlocr-lite"
     tesseract_exe: str = ""
+    clean_text: bool = True   # drop status bar / copyright / running headers, lift page numbers
 
 
 def _find_tesseract(explicit: str = "") -> str:
@@ -380,8 +382,20 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
         text_path = text_dir / f"{path.stem}.txt"
         text_path.write_text(corrected + "\n", encoding="utf-8")
         assembled.append((path.name, corrected))
-    (output / "全文.md").write_text(render_markdown(title, assembled), encoding="utf-8")
+    notes: dict[str, list[str]] = {}
+    if opts.clean_text:
+        cleaned, note_lists, running = clean_pages([t for _, t in assembled])
+        assembled = [(n, c) for (n, _), c in zip(assembled, cleaned)]
+        notes = {n: nl for (n, _), nl in zip(assembled, note_lists) if nl}
+        for (path, (_, body)) in zip(images, assembled):
+            (text_dir / f"{path.stem}.txt").write_text(body + "\n", encoding="utf-8")
+        if running:
+            status(f"繰り返し行（柱・版権表記など）{len(running)}種類を本文から除外")
+    (output / "全文.md").write_text(render_markdown(title, assembled, notes), encoding="utf-8")
     (output / "全文.txt").write_text("\n\n".join(t for _, t in assembled) + "\n", encoding="utf-8")
+    flagged = review_lines(assembled)
+    (output / "要確認.md").write_text(render_review(title, flagged), encoding="utf-8")
+    status(f"数値・単位を含む要確認行: {len(flagged)}行（output/要確認.md）")
     status("原画像PDFを作成中")
     _write_image_pdf(images, output / "画像PDF.pdf", stop, status)
     status("検索可能PDFを作成中")

@@ -126,8 +126,10 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-def render_markdown(title: str, page_texts: list[tuple[str, str]]) -> str:
+def render_markdown(title: str, page_texts: list[tuple[str, str]],
+                    notes: dict[str, list[str]] | None = None) -> str:
     parts = [f"# {title}", "", "<!-- 自動OCRです。医療数値・薬剤名・図表は原本と照合してください。 -->"]
     for filename, body in page_texts:
-        parts += ["", f"<!-- source: {filename} -->", "", normalize_text(body), ""]
+        extra = "".join(f", {n}" for n in (notes or {}).get(filename, []))
+        parts += ["", f"<!-- source: {filename}{extra} -->", "", normalize_text(body), ""]
     return "\n".join(parts).rstrip() + "\n"

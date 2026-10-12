@@ -15,6 +15,7 @@ from ebooktext.capture import CaptureOptions, KEYS, run_capture
 from ebooktext.core import project_dir
 from ebooktext.importer import import_images, import_pdf
 from ebooktext.ocr import OCROptions, convert_book
+from ebooktext.pageprep import ImportOptions
 
 NAVY = "#183153"
 BLUE = "#2c5f9a"
@@ -144,6 +145,10 @@ class App(tk.Tk):
         self.psm_var = tk.StringVar(value="3 (自動)")
         self.ndl_var = tk.StringVar(value="ndlocr-lite")
         self.trim_var = tk.BooleanVar(value=False)
+        self.strip_bars_var = tk.BooleanVar(value=True)
+        self.split_var = tk.BooleanVar(value=True)
+        self.rtl_var = tk.BooleanVar(value=False)
+        self.clean_var = tk.BooleanVar(value=True)
         self.native_var = tk.BooleanVar(value=True)
         self.preprocess_var = tk.BooleanVar(value=True)
         self.upscale_var = tk.BooleanVar(value=True)
@@ -197,6 +202,12 @@ class App(tk.Tk):
         self.start_btn.pack(side="left", padx=(0, 7))
         self.images_btn = ttk.Button(actions, text="画像フォルダを取り込む", command=self.pick_images)
         self.images_btn.pack(side="left", padx=7)
+        prep = ttk.Frame(source)
+        prep.pack(fill="x", pady=(6, 0))
+        ttk.Label(prep, text="取り込み時の整形").pack(side="left", padx=(0, 8))
+        ttk.Checkbutton(prep, text="上下のステータスバーを除去", variable=self.strip_bars_var).pack(side="left", padx=(0, 12))
+        ttk.Checkbutton(prep, text="見開きを左右2ページに分割", variable=self.split_var).pack(side="left", padx=(0, 12))
+        ttk.Checkbutton(prep, text="右開き（縦書き本）", variable=self.rtl_var).pack(side="left")
         self.pdf_btn = ttk.Button(actions, text="PDFを取り込む", command=self.pick_pdf)
         self.pdf_btn.pack(side="left", padx=7)
         ttk.Label(source, text="※ 撮影中は本を最前面にしてください。F8で停止。同じ画面が3回続くと終了。既存の画像には追記します。",
@@ -223,7 +234,8 @@ class App(tk.Tk):
         ttk.Checkbutton(flags, text="画質補正", variable=self.preprocess_var).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(flags, text="小さい画像を拡大", variable=self.upscale_var).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(flags, text="白余白を自動トリミング", variable=self.trim_var).pack(side="left", padx=(0, 16))
-        ttk.Checkbutton(flags, text="PDFの既存テキスト層を優先", variable=self.native_var).pack(side="left")
+        ttk.Checkbutton(flags, text="PDFの既存テキスト層を優先", variable=self.native_var).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(flags, text="柱・ページ番号・版権表記を本文から外す", variable=self.clean_var).pack(side="left")
         run = ttk.Frame(ocr)
         run.pack(fill="x")
         self.ocr_btn = ttk.Button(run, text="▶ OCR / Markdown / PDF を生成", command=self.start_ocr,
@@ -325,12 +337,16 @@ class App(tk.Tk):
         self.launch("キャプチャを開始します。5秒以内に電子書籍を前面に出してください。",
                     lambda: run_capture(book, opts, self.stop_event, self.emit), minimize=True)
 
+    def import_options(self) -> ImportOptions:
+        return ImportOptions(strip_bars=self.strip_bars_var.get(), split_spreads=self.split_var.get(),
+                             right_to_left=self.rtl_var.get())
+
     def pick_images(self):
         directory = filedialog.askdirectory(title="取り込む画像が入ったフォルダを選択")
         if directory:
             try:
                 book = self.book()
-                self.launch("画像取り込み中", lambda: import_images(book, Path(directory), self.emit))
+                self.launch("画像取り込み中", lambda: import_images(book, Path(directory), self.emit, self.import_options()))
             except ValueError as exc:
                 messagebox.showerror("書籍名", str(exc))
 
@@ -339,7 +355,7 @@ class App(tk.Tk):
         if file:
             try:
                 book = self.book()
-                self.launch("PDF取り込み中", lambda: import_pdf(book, Path(file), self.emit))
+                self.launch("PDF取り込み中", lambda: import_pdf(book, Path(file), self.emit, opts=self.import_options()))
             except ValueError as exc:
                 messagebox.showerror("書籍名", str(exc))
 
@@ -350,7 +366,7 @@ class App(tk.Tk):
                               psm=int(self.psm_var.get().split()[0]),
                               trim=self.trim_var.get(), preprocess=self.preprocess_var.get(),
                               upscale=self.upscale_var.get(), prefer_native_pdf=self.native_var.get(),
-                              ndl_command=self.ndl_var.get())
+                              ndl_command=self.ndl_var.get(), clean_text=self.clean_var.get())
         except (ValueError, OSError) as exc:
             messagebox.showerror("設定", str(exc))
             return

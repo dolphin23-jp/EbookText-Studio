@@ -13,16 +13,18 @@ from pathlib import Path
 from ebooktext.core import EXTENSIONS, page_images, project_dir
 from ebooktext.importer import import_images, import_pdf
 from ebooktext.ocr import OCROptions, convert_book
+from ebooktext.pageprep import ImportOptions
 
 
-def process_one(src: Path, base: Path, title: str, opts: OCROptions) -> Path:
+def process_one(src: Path, base: Path, title: str, opts: OCROptions,
+                imp: ImportOptions | None = None) -> Path:
     book = project_dir(base, title)
     if src.is_file() and src.suffix.lower() == '.pdf':
         if not (book / 'pages').is_dir():
-            import_pdf(book, src, print)
+            import_pdf(book, src, print, opts=imp)
     elif src.is_dir():
         if src.resolve() != (book / 'pages').resolve() and not page_images(book / 'pages'):
-            import_images(book, src, print)
+            import_images(book, src, print, imp)
     else:
         raise ValueError(f'画像フォルダまたはPDFが必要です: {src}')
     count = convert_book(book, title, opts, threading.Event(), print)
@@ -41,13 +43,20 @@ def main() -> int:
     parser.add_argument('--ndl-command', default='ndlocr-lite')
     parser.add_argument('--psm', type=int, default=3, choices=[3, 4, 6, 11, 12])
     parser.add_argument('--no-native', action='store_true')
+    parser.add_argument('--no-strip-bars', action='store_true', help='keep dark status/home bars at the image edges')
+    parser.add_argument('--no-split', action='store_true', help='do not split two-page spreads')
+    parser.add_argument('--rtl', action='store_true', help='spreads read right-to-left (vertical-text books)')
+    parser.add_argument('--no-clean', action='store_true', help='keep running headers, page numbers, copyright lines')
     args = parser.parse_args()
     opts = OCROptions(engine=args.engine, lang=args.lang, psm=args.psm,
-                      ndl_command=args.ndl_command, prefer_native_pdf=not args.no_native)
+                      ndl_command=args.ndl_command, prefer_native_pdf=not args.no_native,
+                      clean_text=not args.no_clean)
+    imp = ImportOptions(strip_bars=not args.no_strip_bars, split_spreads=not args.no_split,
+                        right_to_left=args.rtl)
     if args.action == 'one':
         if not args.title:
             parser.error('--title is required for one')
-        process_one(args.input, args.base, args.title, opts)
+        process_one(args.input, args.base, args.title, opts, imp)
         return 0
     if not args.input.is_dir():
         parser.error('batch --input must be a directory')
@@ -60,7 +69,7 @@ def main() -> int:
     for num, src in enumerate(sources, 1):
         print(f'[{num}/{len(sources)}] {src.name}')
         try:
-            process_one(src, args.base, src.stem, opts)
+            process_one(src, args.base, src.stem, opts, imp)
         except (OSError, ValueError, RuntimeError, InterruptedError) as exc:
             print(f'失敗: {src.name}: {exc}')
             failures.append(src.name)

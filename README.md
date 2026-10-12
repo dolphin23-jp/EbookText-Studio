@@ -59,6 +59,22 @@ Tesseractの詳しい導入元: <https://github.com/UB-Mannheim/tesseract/wiki> 
 
 PDFがある場合は「PDFを取り込む」。PDFは180dpiでページ画像に展開します。**PDF内に元々選択可能なテキストが40文字以上あるページは、その元テキストをMarkdown作成に優先利用**します。元PDFを完全に保存するわけではないため、必要であれば元ファイルは別途保管してください。
 
+### 取り込み時の整形（iPadのスクリーンショットPDFなど）
+
+画像・PDFの取り込み時に、次の整形を自動で行います（GUIの「取り込み時の整形」で個別にオフにできます）。
+
+- **上下のステータスバー除去**: 画面上部の時刻・電池残量、下部のホームバーなど、暗い帯を切り落とします。
+- **見開きの自動分割**: 横長（幅/高さ ≥ 1.25）の画像を、ページ中央の余白（のど）で左右2ページに分けます。左→右の順です。縦書きの本は「右開き」にすると右→左の順になります。単ページの画像はそのままです。
+- **PDFの元画像を元の解像度で取り出し**: ページ全体が1枚の画像のPDFは、再描画せず埋め込み画像をそのまま使います。
+
+見開き全面にまたがる画像（章扉の帯など）では、分割位置が数十px中央からずれることがあります。
+
+OCR後は、次の後処理が自動で働きます（GUIの「柱・ページ番号・版権表記を本文から外す」でオフにできます）。
+
+- 状態表示の行（`21:58 5月28日 (木)` など）、`JCOPY` を含む版権表記、複数ページに繰り返し現れる柱（章名の見出し行）を本文から除外します。
+- ページ番号らしい行は本文から外し、`全文.md` のページ見出しコメント（`<!-- source: …, page: 138 -->`）に残します。
+- **`output/要確認.md`**: 数値・単位（mg、mmHg、%、日、歳など）・範囲を含む行の一覧を作ります。`60こ70%`（本当は60～70%）のような、数字の間の記号の誤読が疑われる行には「誤読の疑い」が付きます。医療数値は必ず原本と照合してください。
+
 ## OCRエンジン
 
 ### 1. Tesseract（標準、初回はこちら）
@@ -85,6 +101,7 @@ Documents/EbookTextStudio/書籍名/
  └─ output/
      ├─ 全文.md                     # AIで読むのに便利
      ├─ 全文.txt                    # プレーンテキスト
+     ├─ 要確認.md                   # 数値・単位・範囲を含む行（原本と照合）
      ├─ 画像PDF.pdf                 # 原画像から生成、画像のみ
      ├─ 検索可能PDF.pdf             # 原画像+OCR検索用テキスト層
      └─ pages/page_00001.txt ...   # ページ別テキスト
@@ -114,7 +131,7 @@ Windowsの保存先をiCloud Drive/OneDrive等に設定し、iPadから `output/
 .venv\Scripts\python.exe cli.py batch --input "C:\Books\incoming" --base "C:\EbookText"
 ```
 
-すでに変換済みの書籍は、キャッシュを使って再処理を最小限に抑えます。`--engine NDLOCR-Lite --ndl-command ndlocr-lite` で別のOCRエンジンを指定することもできます。
+すでに変換済みの書籍は、キャッシュを使って再処理を最小限に抑えます。取り込み時の整形は `--no-strip-bars`（バー除去しない）、`--no-split`（見開きを分割しない）、`--rtl`（右開き）、後処理は `--no-clean` で切り替えられます。`--engine NDLOCR-Lite --ndl-command ndlocr-lite` で別のOCRエンジンを指定することもできます。
 
 ## 開発者向け
 
@@ -127,6 +144,8 @@ ebooktext/
  ├─ capture.py      # 画面撮影・ページ送り・重複判定
  ├─ ocr.py          # Tesseract / NDLOCR-Lite、Markdown・PDF生成
  ├─ importer.py     # 画像フォルダ・PDFの取り込み
+ ├─ pageprep.py     # ステータスバー除去・見開き分割
+ ├─ textclean.py    # 柱・ページ番号の除去、要確認行の抽出
  └─ core.py         # 共通処理（ファイル名、画像比較、置換辞書など）
 tests/              # pytest
 ```
@@ -159,4 +178,4 @@ python3 -m venv .venv
 
 ### ソースコード
 
-主な処理は`ebooktext/capture.py`、`ebooktext/ocr.py`、`ebooktext/importer.py`に分割しています。すべてPythonの通常のスクリプトで、利用者が自由に変更可能です。
+主な処理は`ebooktext/capture.py`、`ebooktext/ocr.py`、`ebooktext/importer.py`（取り込み）、`ebooktext/pageprep.py`（ステータスバー除去・見開き分割）、`ebooktext/textclean.py`（後処理・要確認行）に分割しています。すべてPythonの通常のスクリプトで、利用者が自由に変更可能です。
