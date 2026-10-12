@@ -76,3 +76,19 @@ def test_import_images(tmp_path):
     assert (book / 'pages' / 'page_00001.png').is_file()
     with pytest.raises(ValueError):
         import_images(book, original / 'pages', lambda _: None)
+
+
+def test_user_tessdata_is_used_when_complete(tmp_path, monkeypatch):
+    import os
+    from ebooktext.ocr import user_tessdata_dir, _use_user_tessdata
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    monkeypatch.delenv('TESSDATA_PREFIX', raising=False)
+    folder = user_tessdata_dir()
+    folder.mkdir(parents=True)
+    (folder / 'eng.traineddata').write_bytes(b'x')
+    _use_user_tessdata()
+    assert 'TESSDATA_PREFIX' not in os.environ  # jpn missing -> leave Tesseract defaults
+    (folder / 'jpn.traineddata').write_bytes(b'x')
+    _use_user_tessdata()
+    assert os.environ['TESSDATA_PREFIX'] == str(folder)
+    monkeypatch.delenv('TESSDATA_PREFIX')
