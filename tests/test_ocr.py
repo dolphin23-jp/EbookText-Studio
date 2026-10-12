@@ -39,8 +39,8 @@ def test_tesseract_end_to_end(tmp_path):
         assert not pdf[0].get_text().strip()
     with fitz.open(out / '検索可能PDF.pdf') as pdf:
         assert len(pdf) == 2
-        assert 'Hello World 1' in pdf[0].get_text()
-        assert 'Hello World 2' in pdf[1].get_text()
+        assert 'Hello World 1' in ' '.join(pdf[0].get_text().split())
+        assert 'Hello World 2' in ' '.join(pdf[1].get_text().split())
     assert any('Tesseract' in s for s in msgs)
     # OCR rerun should use cache.
     new_msgs = []

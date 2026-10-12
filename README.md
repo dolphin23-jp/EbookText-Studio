@@ -4,6 +4,19 @@ Windows上に**実際に表示されているページ**を、通常のページ
 
 **Kindle（Windows版またはブラウザ版）、楽天Kobo、Google Play ブックス、DMMブックス、その他のビューア**を想定しています。ただし、すべてのビューアでの動作を保証するものではありません。画面撮影を保護するビューアでは黒い画面が保存される場合があります。このソフトはDRMを解除したり、ブロックを回避したりしません。
 
+## 目次
+
+- [セットアップ（Windows 10/11）](#ダウンロード後のセットアップwindows-1011)
+- [画面キャプチャ → OCR](#画面キャプチャ--ocr)
+- [既存の画像・PDFからOCR](#既存の画像pdfからocr)
+- [OCRエンジン](#ocrエンジン)
+- [保存されるファイル](#保存されるファイル)
+- [途中から再実行する](#途中から再実行する)
+- [iPadから使う](#ipadから使う)
+- [CLIでの一括OCR](#cliでの一括ocr上級者向け)
+- [開発者向け](#開発者向け)
+- [注意点・権利について](#注意点権利について)
+
 ## ダウンロード後のセットアップ（Windows 10/11）
 
 1. ZIPを「すべて展開」し、`setup.bat` を実行してください。Python 3.11〜3.13が必要です。ない場合は **Python 3.12（python.org）** をインストールしてから再実行します。セットアップは専用の `.venv` を自動作成し、画面キャプチャ・OCR補助用のPythonライブラリをインストールします。
@@ -73,6 +86,50 @@ Documents/EbookTextStudio/書籍名/
 
 Windowsの保存先をiCloud Drive/OneDrive等に設定し、iPadから `output/全文.md` と `検索可能PDF.pdf` を読む構成が手軽です。クラウドAIに本を丸ごとアップロードする場合には著作権・電子書籍の契約条件・プライバシーに注意してください。
 
+## CLIでの一括OCR（上級者向け）
+
+画面撮影後の**画像フォルダやPDFが複数ある場合**は、コマンドで順番に処理できます。Kindleビューアから複数冊を自動選択する機能ではありません。
+
+```powershell
+# 画像フォルダ1冊を取り込み、OCRする
+.venv\Scripts\python.exe cli.py one --input "C:\Books\my_pages" --base "C:\EbookText" --title "腎臓内科学"
+
+# C:\Books\incoming の「サブフォルダ」または「PDF」を1冊ずつ処理
+.venv\Scripts\python.exe cli.py batch --input "C:\Books\incoming" --base "C:\EbookText"
+```
+
+すでに変換済みの書籍は、キャッシュを使って再処理を最小限に抑えます。`--engine NDLOCR-Lite --ndl-command ndlocr-lite` で別のOCRエンジンを指定することもできます。
+
+## 開発者向け
+
+### ディレクトリ構成
+
+```text
+app.py              # GUI（tkinter）
+cli.py              # CLI（one / batch）
+ebooktext/
+ ├─ capture.py      # 画面撮影・ページ送り・重複判定
+ ├─ ocr.py          # Tesseract / NDLOCR-Lite、Markdown・PDF生成
+ ├─ importer.py     # 画像フォルダ・PDFの取り込み
+ └─ core.py         # 共通処理（ファイル名、画像比較、置換辞書など）
+tests/              # pytest
+```
+
+### テストの実行
+
+画面撮影とGUIはWindows専用ですが、OCR・取り込み・PDF生成のテストはLinux/macOSでも実行できます。OCRのテストにはTesseract本体と英語データ（`eng`）が必要です。
+
+```bash
+# Ubuntu/Debianの例
+sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
+
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q tests
+```
+
+テストフォント（DejaVu Sans）が `/usr/share/fonts/truetype/dejavu/` にない環境では、`tests/test_ocr.py` のフォントパスを調整してください。
+
 ## 注意点・権利について
 
 **閲覧権限のあるコンテンツの、法令・利用規約で許可される範囲でのみ使用してください。** 著作権や電子書籍サービスの利用規約に従い、第三者への再配布や公開は行わないでください。利用者が見ることのできる画面の通常撮影・通常キー入力しか行わず、DRM解除や保護機能の回避には対応していません。
@@ -87,17 +144,3 @@ Windowsの保存先をiCloud Drive/OneDrive等に設定し、iPadから `output/
 ### ソースコード
 
 主な処理は`ebooktext/capture.py`、`ebooktext/ocr.py`、`ebooktext/importer.py`に分割しています。すべてPythonの通常のスクリプトで、利用者が自由に変更可能です。
-
-## CLIでの一括OCR（上級者向け）
-
-画面撮影後の**画像フォルダやPDFが複数ある場合**は、コマンドで順番に処理できます。Kindleビューアから複数冊を自動選択する機能ではありません。
-
-```powershell
-# 画像フォルダ1冊を取り込み、OCRする
-.venv\Scripts\python.exe cli.py one --input "C:\Books\my_pages" --base "C:\EbookText" --title "腎臓内科学"
-
-# C:\Books\incoming の「サブフォルダ」または「PDF」を1冊ずつ処理
-.venv\Scripts\python.exe cli.py batch --input "C:\Books\incoming" --base "C:\EbookText"
-```
-
-すでに変換済みの書籍は、キャッシュを使って再処理を最小限に抑えます。`--engine NDLOCR-Lite --ndl-command ndlocr-lite` で別のOCRエンジンを指定することもできます。
