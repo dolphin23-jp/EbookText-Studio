@@ -71,8 +71,8 @@ def nearly_identical(a: Image.Image, b: Image.Image, threshold: float = 1.2) -> 
     return sum(i * count for i, count in enumerate(diff.histogram())) / (128 * 128) < threshold
 
 
-def auto_trim_white(image: Image.Image, tolerance: int = 18, margin: int = 8) -> Image.Image:
-    """Trim uniform white margins only; keep pages unchanged if trim is ambiguous."""
+def auto_trim_box(image: Image.Image, tolerance: int = 18, margin: int = 8) -> tuple[int, int, int, int] | None:
+    """Bounding box of the content inside uniform white margins, or None when trimming is unsafe."""
     rgb = image.convert("RGB")
     # White-page trim must not consume significant image contents.
     small = rgb.copy()
@@ -81,7 +81,7 @@ def auto_trim_white(image: Image.Image, tolerance: int = 18, margin: int = 8) ->
     mask = inverted.point(lambda v: 255 if v > tolerance else 0)
     bbox = mask.getbbox()
     if not bbox:
-        return rgb
+        return None
     sx, sy = rgb.width / small.width, rgb.height / small.height
     left = max(0, int(bbox[0] * sx) - margin)
     top = max(0, int(bbox[1] * sy) - margin)
@@ -89,23 +89,43 @@ def auto_trim_white(image: Image.Image, tolerance: int = 18, margin: int = 8) ->
     bottom = min(rgb.height, int(bbox[3] * sy) + margin)
     # Suspicious crop of a page: do not trim automatically.
     if (right - left) < rgb.width * 0.55 or (bottom - top) < rgb.height * 0.55:
-        return rgb
-    return rgb.crop((left, top, right, bottom))
+        return None
+    return left, top, right, bottom
+
+
+def auto_trim_white(image: Image.Image, tolerance: int = 18, margin: int = 8) -> Image.Image:
+    """Trim uniform white margins only; keep pages unchanged if trim is ambiguous."""
+    box = auto_trim_box(image, tolerance, margin)
+    rgb = image.convert("RGB")
+    return rgb.crop(box) if box else rgb
+
+
+def prepare_ocr_ex(image: Image.Image, upscale: bool = True, autocontrast: bool = True,
+                   trim: bool = False) -> tuple[Image.Image, tuple[float, float, float, float]]:
+    """prepare_ocr plus the transform back to the input image: x_in = x_out / sx + dx, y_in = y_out / sy + dy."""
+    out = image.convert("RGB")
+    dx = dy = 0.0
+    sx = sy = 1.0
+    if trim:
+        box = auto_trim_box(out)
+        if box:
+            out = out.crop(box)
+            dx, dy = float(box[0]), float(box[1])
+    if upscale and min(out.size) < 1300:
+        factor = min(2.0, 1300 / min(out.size))
+        if factor > 1.05:
+            w0, h0 = out.size
+            out = out.resize((round(w0 * factor), round(h0 * factor)), Image.Resampling.LANCZOS)
+            sx, sy = out.width / w0, out.height / h0
+    if autocontrast:
+        gray = ImageOps.autocontrast(out.convert("L"), cutoff=0.3)
+        out = Image.merge("RGB", (gray, gray, gray))
+    return out, (sx, sy, dx, dy)
 
 
 def prepare_ocr(image: Image.Image, upscale: bool = True, autocontrast: bool = True,
                 trim: bool = False) -> Image.Image:
-    out = image.convert("RGB")
-    if trim:
-        out = auto_trim_white(out)
-    if upscale and min(out.size) < 1300:
-        scale = min(2.0, 1300 / min(out.size))
-        if scale > 1.05:
-            out = out.resize((round(out.width * scale), round(out.height * scale)), Image.Resampling.LANCZOS)
-    if autocontrast:
-        gray = ImageOps.autocontrast(out.convert("L"), cutoff=0.3)
-        out = Image.merge("RGB", (gray, gray, gray))
-    return out
+    return prepare_ocr_ex(image, upscale, autocontrast, trim)[0]
 
 
 def replacements_load(path: Path) -> dict[str, str]:

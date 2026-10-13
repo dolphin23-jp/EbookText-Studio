@@ -36,6 +36,18 @@ def _words(data: dict) -> list[dict]:
 _ASCII_WORD = re.compile(r"[A-Za-z0-9]")
 
 
+def _needs_space(prev: dict, cur: dict) -> bool:
+    return bool(_ASCII_WORD.match(prev["text"][-1]) or _ASCII_WORD.match(cur["text"][0]))
+
+
+def _line_box(text: str, words: list[dict], dx: float = 0, dy: float = 0) -> dict:
+    """One text-layer box per line: searching the PDF for a phrase works only when the phrase sits
+    in a single text run, and a run per token splits Japanese words."""
+    box = (min(w["box"][0] for w in words), min(w["box"][1] for w in words),
+           max(w["box"][2] for w in words), max(w["box"][3] for w in words))
+    return {"text": text, "boundingBox": _quad(box, dx, dy)}
+
+
 def _join(words: list[dict]) -> str:
     """Join word tokens close to Tesseract's text output.
 
@@ -44,7 +56,7 @@ def _join(words: list[dict]) -> str:
     wherever one side is an ASCII letter/digit" reproduces it best (97% line-text similarity)."""
     text = words[0]["text"]
     for prev, cur in zip(words, words[1:]):
-        if _ASCII_WORD.match(prev["text"][-1]) or _ASCII_WORD.match(cur["text"][0]):
+        if _needs_space(prev, cur):
             text += " "
         text += cur["text"]
     return text
@@ -55,8 +67,15 @@ def _line_conf(words: list[dict]) -> float:
     return sum(w["conf"] * len(w["text"]) for w in words) / max(n, 1)
 
 
+def _quad(box: tuple[float, float, float, float], dx: float = 0, dy: float = 0) -> list[list[float]]:
+    x0, y0, x1, y1 = box
+    return [[x0 + dx, y0 + dy], [x0 + dx, y1 + dy], [x1 + dx, y1 + dy], [x1 + dx, y0 + dy]]
+
+
 def read_page(image: Image.Image, lang: str, psm: int, reread: bool = True,
-              threshold: float = 80, margin: float = 3, pad: int = 6) -> tuple[str, ReadStats]:
+              threshold: float = 80, margin: float = 3,
+              pad: int = 6) -> tuple[str, ReadStats, list[dict]]:
+    """Returns (text, stats, boxes); boxes are {"text", "boundingBox"} per line in image pixels."""
     import pytesseract
 
     data = pytesseract.image_to_data(image, lang=lang, config=f"--psm {psm}",
@@ -66,9 +85,11 @@ def read_page(image: Image.Image, lang: str, psm: int, reread: bool = True,
         lines.setdefault(w["key"], []).append(w)
     stats = ReadStats(lines=len(lines))
     out: list[str] = []
+    boxes: list[dict] = []
     last_par = None
     for key, ws in lines.items():
         text = _join(ws)
+        line_boxes = [_line_box(text, ws)]
         conf = _line_conf(ws)
         if reread and conf < threshold:
             stats.reread += 1
@@ -81,9 +102,11 @@ def read_page(image: Image.Image, lang: str, psm: int, reread: bool = True,
                                                    output_type=pytesseract.Output.DICT))
             if new and _line_conf(new) > conf + margin:
                 text = _join(new)
+                line_boxes = [_line_box(text, new, x0, y0)]
                 stats.improved += 1
         if last_par is not None and key[:2] != last_par:
             out.append("")
         last_par = key[:2]
         out.append(text)
-    return "\n".join(out), stats
+        boxes += line_boxes
+    return "\n".join(out), stats, boxes

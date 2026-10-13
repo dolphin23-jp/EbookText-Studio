@@ -82,7 +82,7 @@ def test_user_tessdata_is_used_when_complete(tmp_path, monkeypatch):
     import os
     from ebooktext.ocr import user_tessdata_dir, _use_user_tessdata
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
-    monkeypatch.delenv('TESSDATA_PREFIX', raising=False)
+    monkeypatch.delenv('TESSDATA_PREFIX', raising=False)   # records 'unset' so teardown restores that
     folder = user_tessdata_dir()
     folder.mkdir(parents=True)
     (folder / 'eng.traineddata').write_bytes(b'x')
@@ -91,4 +91,24 @@ def test_user_tessdata_is_used_when_complete(tmp_path, monkeypatch):
     (folder / 'jpn.traineddata').write_bytes(b'x')
     _use_user_tessdata()
     assert os.environ['TESSDATA_PREFIX'] == str(folder)
-    monkeypatch.delenv('TESSDATA_PREFIX')
+    os.environ.pop('TESSDATA_PREFIX')   # set by the code under test, not by monkeypatch
+
+
+def test_searchable_pdf_boxes_map_back_to_original_pixels(tmp_path):
+    book = sample_book(tmp_path)
+    convert_book(book, 't', OCROptions(lang='eng', preprocess=False, workers=2), threading.Event(), lambda _: None)
+    with fitz.open(book / 'output' / '検索可能PDF.pdf') as pdf:
+        # The page is 800x1100 px; "Kidney function" was drawn at (60, 170) with a 35 px font,
+        # while OCR ran on a 1.6x upscaled copy: the box must be mapped back.
+        hits = pdf[0].search_for('Kidney function')
+        assert hits, 'phrase should be searchable as one run'
+        r = hits[0]
+        assert 40 < r.x0 < 90 and 150 < r.y0 < 200, r
+
+
+def test_stop_event_interrupts_ocr(tmp_path):
+    book = sample_book(tmp_path)
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(InterruptedError):
+        convert_book(book, 't', OCROptions(lang='eng', workers=2), stop, lambda _: None)

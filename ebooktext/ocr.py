@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from PIL import Image
 from .linereread import read_page
 from .textclean import clean_pages, render_review, review_lines
 from .core import (_write_json_atomic, file_sha256, normalize_text, page_images,
-                   prepare_ocr, render_markdown, replacements_load, save_manifest)
+                   prepare_ocr_ex, render_markdown, replacements_load, save_manifest)
 
 
 @dataclass
@@ -38,6 +39,7 @@ class OCROptions:
     ndl_command: str = "ndlocr-lite"
     tesseract_exe: str = ""
     reread_low_conf: bool = True   # re-read low-confidence lines one by one (Tesseract only)
+    workers: int = 0          # parallel Tesseract pages; 0 = auto (CPU count, max 8)
     clean_text: bool = True   # drop status bar / copyright / running headers, lift page numbers
 
 
@@ -185,6 +187,13 @@ def _add_invisible_boxes(page: fitz.Page, boxes: list[dict], img_width: int,
         # Invisible Unicode/CJK text layer; font is bundled into PyMuPDF.
         size = max(3.0, min(70.0, (bottom - top) * .85))
         try:
+            # Keep long lines inside their box so search highlights do not overrun it.
+            unit = fitz.get_text_length(text, fontname="japan", fontsize=1)
+            if unit > 0:
+                size = max(3.0, min(size, (right - left) / unit))
+        except (ValueError, RuntimeError):
+            pass
+        try:
             page.insert_text((left, min(page.rect.height - 1, top + size)), text,
                              fontsize=size, fontname="japan", render_mode=3,
                              overlay=True)
@@ -207,25 +216,7 @@ def _write_image_pdf(images: list[Path], dest: Path, stop: threading.Event,
     tmp.replace(dest)
 
 
-def _write_searchable_from_ocr_pdf(images: list[Path], pdf_cache: Path, dest: Path,
-                                   stop: threading.Event, status: Callable[[str], None]) -> None:
-    with fitz.open() as doc:
-        for i, path in enumerate(images, 1):
-            if stop.is_set():
-                raise InterruptedError("検索可能PDF生成を停止しました。")
-            src_path = pdf_cache / f"{path.stem}.pdf"
-            if not src_path.exists():
-                raise RuntimeError(f"OCR済みPDFがありません: {src_path}")
-            with fitz.open(src_path) as src:
-                doc.insert_pdf(src)
-            if i % 10 == 0 or i == len(images):
-                status(f"検索可能PDFを統合中 {i}/{len(images)}")
-        tmp = dest.with_suffix(".partial.pdf")
-        doc.save(tmp, garbage=3, deflate=True)
-    tmp.replace(dest)
-
-
-def _write_searchable_ndl(images: list[Path], box_data: dict[str, list[dict]],
+def _write_searchable_boxes(images: list[Path], box_data: dict[str, list[dict]],
                          dest: Path, stop: threading.Event, status: Callable[[str], None]) -> None:
     with fitz.open() as doc:
         for i, path in enumerate(images, 1):
@@ -242,6 +233,53 @@ def _write_searchable_ndl(images: list[Path], box_data: dict[str, list[dict]],
     tmp.replace(dest)
 
 
+def _tesseract_pages(paths: list[Path], opts: OCROptions, stop: threading.Event,
+                     status: Callable[[str], None], total: int) -> dict[str, tuple[str, list[dict]]]:
+    """OCR pages with Tesseract, several at a time. Returns name -> (text, boxes in original image pixels)."""
+    workers = opts.workers if opts.workers > 0 else max(1, min(os.cpu_count() or 1, 8))
+    workers = max(1, min(workers, len(paths)))
+    saved_omp = os.environ.get("OMP_THREAD_LIMIT")
+    if workers > 1:
+        # One thread per Tesseract process: parallel pages scale better than parallel threads inside one page.
+        os.environ["OMP_THREAD_LIMIT"] = "1"
+
+    def one(path: Path) -> tuple[str, str, list[dict], object]:
+        if stop.is_set():
+            raise InterruptedError("OCRを停止しました。")
+        with Image.open(path) as original:
+            pre, (sx, sy, dx, dy) = prepare_ocr_ex(original.convert("RGB"), upscale=opts.upscale,
+                                                  autocontrast=opts.preprocess, trim=opts.trim)
+        text, stats, boxes = read_page(pre, opts.lang, opts.psm, reread=opts.reread_low_conf)
+        for item in boxes:
+            item["boundingBox"] = [[x / sx + dx, y / sy + dy] for x, y in item["boundingBox"]]
+        return path.name, normalize_text(text), boxes, stats
+
+    results: dict[str, tuple[str, list[dict]]] = {}
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = [executor.submit(one, p) for p in paths]
+        for done, future in enumerate(as_completed(futures), 1):
+            name, text, boxes, stats = future.result()
+            results[name] = (text, boxes)
+            msg = f"Tesseract: {done}/{len(paths)}（全{total}ページ）"
+            if stats.reread:
+                msg += f" 低信頼{stats.reread}行を再読み→{stats.improved}行改善"
+            status(msg)
+            if stop.is_set():
+                raise InterruptedError("OCRを停止しました。")
+    except BaseException:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    finally:
+        if workers > 1:
+            if saved_omp is None:
+                os.environ.pop("OMP_THREAD_LIMIT", None)
+            else:
+                os.environ["OMP_THREAD_LIMIT"] = saved_omp
+    executor.shutdown(wait=True)
+    return results
+
+
 def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event,
                  status: Callable[[str], None]) -> int:
     book = Path(book)
@@ -256,8 +294,6 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     output.mkdir(parents=True, exist_ok=True)
     cache_dir = book / "ocr_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    ocr_pdf_dir = cache_dir / "tesseract_pdf"
-    ocr_pdf_dir.mkdir(parents=True, exist_ok=True)
     text_dir = output / "pages"
     text_dir.mkdir(parents=True, exist_ok=True)
     cache_json_path = cache_dir / "cache.json"
@@ -294,6 +330,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
                            "upscale": opts.upscale if opts.engine == "Tesseract" else False,
                            "trim": opts.trim if opts.engine == "Tesseract" else False,
                            "reread": opts.reread_low_conf if opts.engine == "Tesseract" else False,
+                           "v": 2,  # 2: Tesseract boxes are cached and drive the searchable PDF
                            "native": bool(opts.prefer_native_pdf and path.name in native_texts)}, sort_keys=True)
 
     keys = {p.name: cache_key(p) for p in images}
@@ -301,9 +338,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     for path in images:
         cached = old_entries.get(path.name, {})
         txt_path = cache_dir / f"{path.stem}.txt"
-        pdf_path = ocr_pdf_dir / f"{path.stem}.pdf"
-        valid = (cached.get("key") == keys[path.name] and txt_path.is_file()
-                 and (opts.engine == "NDLOCR-Lite" or pdf_path.is_file()))
+        valid = cached.get("key") == keys[path.name] and txt_path.is_file()
         if valid:
             new_text[path.name] = txt_path.read_text(encoding="utf-8")
             boxes_by_name[path.name] = cached.get("boxes", [])
@@ -339,42 +374,23 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
             _write_json_atomic(cache_json_path, {"entries": {**old_entries, **new_entries}})
             status(f"NDLOCR-Lite結果保存: {i}/{len(pending)}")
     elif opts.engine == "Tesseract":
-        import pytesseract
-        for i, path in enumerate(pending, 1):
-            if stop.is_set():
-                raise InterruptedError("OCRを停止しました。")
-            status(f"Tesseract: {i}/{len(pending)}（全{len(images)}ページ）")
-            with Image.open(path) as original:
-                original_rgb = original.convert("RGB")
-                pre = prepare_ocr(original_rgb, upscale=opts.upscale,
-                                  autocontrast=opts.preprocess, trim=opts.trim)
-                config = f"--psm {opts.psm}"
-                text, stats = read_page(pre, opts.lang, opts.psm, reread=opts.reread_low_conf)
-                raw = normalize_text(text)
-                if stats.reread:
-                    status(f"  低信頼の行 {stats.reread}行を再読み → {stats.improved}行を改善")
-                # Use *original* screenshot for the searchable PDF to preserve diagrams and color.
-                pdf = pytesseract.image_to_pdf_or_hocr(original_rgb, extension="pdf",
-                                                      lang=opts.lang, config=config)
+        todo = pending + native_pending
+        results = _tesseract_pages(todo, opts, stop, status, len(images))
+        for path in todo:
+            raw, boxes = results[path.name]
+            if path in native_pending:
+                # Markdown uses the PDF's own text; the OCR boxes only feed the searchable PDF.
+                raw = new_text[path.name]
+            else:
+                new_text[path.name] = raw
             (cache_dir / f"{path.stem}.txt").write_text(raw, encoding="utf-8")
-            (ocr_pdf_dir / f"{path.stem}.pdf").write_bytes(pdf)
-            new_text[path.name] = raw
-            new_entries[path.name] = {"key": keys[path.name], "boxes": []}
-            _write_json_atomic(cache_json_path, {"entries": {**old_entries, **new_entries}})
-
-    # Build a full searchable PDF even when source PDF contained native text.
-    # Tesseract can use native text only for Markdown; run PDF-only OCR in that case.
-    if opts.engine == "Tesseract":
-        import pytesseract
-        for path in native_pending:
-            if stop.is_set():
-                raise InterruptedError("OCRを停止しました。")
-            pdfpath = ocr_pdf_dir / f"{path.stem}.pdf"
-            with Image.open(path) as im:
-                pdf = pytesseract.image_to_pdf_or_hocr(im.convert("RGB"), extension="pdf",
-                                                      lang=opts.lang, config=f"--psm {opts.psm}")
-            pdfpath.write_bytes(pdf)
+            boxes_by_name[path.name] = boxes
+            new_entries[path.name] = {"key": keys[path.name], "boxes": boxes,
+                                      **({"native": True} if path in native_pending else {})}
+        _write_json_atomic(cache_json_path, {"entries": {**old_entries, **new_entries}})
     else:
+        pass
+    if opts.engine != "Tesseract":
         for path in native_pending:
             boxes_by_name[path.name] = []
 
@@ -405,10 +421,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     status("原画像PDFを作成中")
     _write_image_pdf(images, output / "画像PDF.pdf", stop, status)
     status("検索可能PDFを作成中")
-    if opts.engine == "Tesseract":
-        _write_searchable_from_ocr_pdf(images, ocr_pdf_dir, output / "検索可能PDF.pdf", stop, status)
-    else:
-        _write_searchable_ndl(images, boxes_by_name, output / "検索可能PDF.pdf", stop, status)
+    _write_searchable_boxes(images, boxes_by_name, output / "検索可能PDF.pdf", stop, status)
     save_manifest(book, {"ocr_engine": opts.engine, "ocr_count": len(images),
                          "output_files": ["output/全文.md", "output/全文.txt", "output/画像PDF.pdf", "output/検索可能PDF.pdf"]})
     return len(images)
