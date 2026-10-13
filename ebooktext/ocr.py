@@ -20,6 +20,7 @@ from typing import Callable
 import fitz
 from PIL import Image
 
+from .linereread import read_page
 from .textclean import clean_pages, render_review, review_lines
 from .core import (_write_json_atomic, file_sha256, normalize_text, page_images,
                    prepare_ocr, render_markdown, replacements_load, save_manifest)
@@ -36,6 +37,7 @@ class OCROptions:
     prefer_native_pdf: bool = True
     ndl_command: str = "ndlocr-lite"
     tesseract_exe: str = ""
+    reread_low_conf: bool = True   # re-read low-confidence lines one by one (Tesseract only)
     clean_text: bool = True   # drop status bar / copyright / running headers, lift page numbers
 
 
@@ -291,6 +293,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
                            "preprocess": opts.preprocess if opts.engine == "Tesseract" else False,
                            "upscale": opts.upscale if opts.engine == "Tesseract" else False,
                            "trim": opts.trim if opts.engine == "Tesseract" else False,
+                           "reread": opts.reread_low_conf if opts.engine == "Tesseract" else False,
                            "native": bool(opts.prefer_native_pdf and path.name in native_texts)}, sort_keys=True)
 
     keys = {p.name: cache_key(p) for p in images}
@@ -346,7 +349,10 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
                 pre = prepare_ocr(original_rgb, upscale=opts.upscale,
                                   autocontrast=opts.preprocess, trim=opts.trim)
                 config = f"--psm {opts.psm}"
-                raw = normalize_text(pytesseract.image_to_string(pre, lang=opts.lang, config=config))
+                text, stats = read_page(pre, opts.lang, opts.psm, reread=opts.reread_low_conf)
+                raw = normalize_text(text)
+                if stats.reread:
+                    status(f"  低信頼の行 {stats.reread}行を再読み → {stats.improved}行を改善")
                 # Use *original* screenshot for the searchable PDF to preserve diagrams and color.
                 pdf = pytesseract.image_to_pdf_or_hocr(original_rgb, extension="pdf",
                                                       lang=opts.lang, config=config)

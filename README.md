@@ -73,6 +73,7 @@ OCR後は、次の後処理が自動で働きます（GUIの「柱・ページ�
 
 - 状態表示の行（`21:58 5月28日 (木)` など）、`JCOPY` を含む版権表記、複数ページに繰り返し現れる柱（章名の見出し行）を本文から除外します。
 - ページ番号らしい行は本文から外し、`全文.md` のページ見出しコメント（`<!-- source: …, page: 138 -->`）に残します。
+- **低信頼の行の再読み（Tesseractのみ、標準でオン）**: ページ全体の読み取りで信頼度の低い行（既定: 信頼度80未満）を、その行だけ切り出して単独で読み直し、信頼度が明確に上がった場合だけ置き換えます。色つきの帯の見出し、表の中の語、小さい脚注などで効果があります。実測では再読みした行の約4割が改善し、OCR時間は約1.6倍になります（GUIの「低信頼の行を再読み」、CLIの `--no-reread` でオフ）。なお、再読みの結果は `全文.md`・`全文.txt` に反映されますが、`検索可能PDF.pdf` の文字層には反映されません。
 - **`output/要確認.md`**: 数値・単位（mg、mmHg、%、日、歳など）・範囲を含む行の一覧を作ります。`60こ70%`（本当は60～70%）のような、数字の間の記号の誤読が疑われる行には「誤読の疑い」が付きます。医療数値は必ず原本と照合してください。
 
 ## OCRエンジン
@@ -131,7 +132,7 @@ Windowsの保存先をiCloud Drive/OneDrive等に設定し、iPadから `output/
 .venv\Scripts\python.exe cli.py batch --input "C:\Books\incoming" --base "C:\EbookText"
 ```
 
-すでに変換済みの書籍は、キャッシュを使って再処理を最小限に抑えます。取り込み時の整形は `--no-strip-bars`（バー除去しない）、`--no-split`（見開きを分割しない）、`--rtl`（右開き）、後処理は `--no-clean` で切り替えられます。`--engine NDLOCR-Lite --ndl-command ndlocr-lite` で別のOCRエンジンを指定することもできます。
+すでに変換済みの書籍は、キャッシュを使って再処理を最小限に抑えます。取り込み時の整形は `--no-strip-bars`（バー除去しない）、`--no-split`（見開きを分割しない）、`--rtl`（右開き）、後処理は `--no-clean`、低信頼行の再読みは `--no-reread` で切り替えられます。`--engine NDLOCR-Lite --ndl-command ndlocr-lite` で別のOCRエンジンを指定することもできます。
 
 ## 開発者向け
 
@@ -145,6 +146,7 @@ ebooktext/
  ├─ ocr.py          # Tesseract / NDLOCR-Lite、Markdown・PDF生成
  ├─ importer.py     # 画像フォルダ・PDFの取り込み
  ├─ pageprep.py     # ステータスバー除去・見開き分割
+ ├─ linereread.py   # 低信頼行の再読み
  ├─ textclean.py    # 柱・ページ番号の除去、要確認行の抽出
  └─ core.py         # 共通処理（ファイル名、画像比較、置換辞書など）
 tests/              # pytest
@@ -178,4 +180,4 @@ python3 -m venv .venv
 
 ### ソースコード
 
-主な処理は`ebooktext/capture.py`、`ebooktext/ocr.py`、`ebooktext/importer.py`（取り込み）、`ebooktext/pageprep.py`（ステータスバー除去・見開き分割）、`ebooktext/textclean.py`（後処理・要確認行）に分割しています。すべてPythonの通常のスクリプトで、利用者が自由に変更可能です。
+主な処理は`ebooktext/capture.py`、`ebooktext/ocr.py`、`ebooktext/importer.py`（取り込み）、`ebooktext/pageprep.py`（ステータスバー除去・見開き分割）、`ebooktext/linereread.py`（低信頼行の再読み）、`ebooktext/textclean.py`（後処理・要確認行）に分割しています。すべてPythonの通常のスクリプトで、利用者が自由に変更可能です。
