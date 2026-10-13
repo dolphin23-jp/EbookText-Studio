@@ -28,6 +28,7 @@ Windows上に**実際に表示されているページ**を、通常のページ
    - 専用の `.venv` を作成し、必要なライブラリをインストール
    - Tesseract OCRがなければ `winget` で導入
    - 言語データ（`eng` / `jpn` / `jpn_vert` / `osd`）を `%LOCALAPPDATA%\EbookTextStudio\tessdata` にダウンロード（管理者権限不要）。アプリは自動でこの場所を使います
+   - **NDLOCR-Lite**（日本語書籍向けOCR、推奨）を取得し、専用の仮想環境に導入（不要なら `setup.bat -NoNdl`）
    - デスクトップとスタートメニューに「EbookText Studio」のショートカットを作成（不要なら `setup.bat -NoShortcut`）
 2. ショートカット、または `run.bat` からGUIを起動します。
 
@@ -79,17 +80,36 @@ OCR後は、次の後処理が自動で働きます（GUIの「柱・ページ�
 
 ## OCRエンジン
 
-### 1. Tesseract（標準、初回はこちら）
+日本語の書籍（特に医学書）には **NDLOCR-Lite を推奨**します。`setup.bat` が自動で導入し、導入済みならGUI・CLIの既定エンジンになります。
 
-`Tesseract` を選択し、言語は `jpn+eng`、PSM=3（レイアウト自動）を推奨します。単段組ならPSM=4/6、文章の配置が変則的なら11も試せます。画像の色や文字の濃さにより「画質補正」を切り替えます。OCR前処理はテキスト抽出時のみで、検索可能PDFの画像には原スクリーンショットを用います。
+### 実測での比較（医学書3冊のうち、iPadスクリーンショットのPDF）
 
-**注意:** 数式、図表、縦組、医学用語は誤認識されます。検索可能PDFはOCRエンジン生成のテキストレイヤー付きですが原画像の文字と完全一致しないことがあります。
+同じページを、手で書き起こした原文と比べた類似度です（1.0が完全一致）。Tesseractはこのコンテナのapt版の日本語データ（fast）と高精度版（best）、いずれも低信頼行の再読みあり。
 
-### 2. NDLOCR-Lite（日本語書籍向け・任意）
+| 対象 | Tesseract（fast） | Tesseract（best） | NDLOCR-Lite |
+| --- | --- | --- | --- |
+| 本文13行（数値を多く含む） | 0.945 | 0.955 | **0.987** |
+| 本文中の数値の再現率 | 0.947 | 0.895 | **1.000** |
+| 色つきの表3（疾患名の列挙） | 0.854 | 0.950 | **0.973** |
+| 色つきの囲み（表4） | 0.927 | 0.879 | **0.933** |
 
-国立国会図書館の[NDLOCR-Lite公式リポジトリ](https://github.com/ndl-lab/ndlocr-lite)の**CLI版**を別途導入できます。Python環境やモデルのセットアップには公式READMEを参照し、`ndlocr-lite --version` の動作を確認してください。GUIの「OCRエンジン」でNDLOCR-Liteに切り替え、「NDLOCR-Liteコマンド」に `ndlocr-lite`、または公式ソース版の `src/ocr.py` のフルパスを指定します。`src/ocr.py` を指定した場合はEbookText Studioの `.venv` に公式の依存ライブラリとモデルがインストールされている必要があります。
+NDLOCR-Liteは `50～60歳` の「～」、`98%`・`94%`、文献番号の上付き（`5,6)`）まで読めました。ただし完全ではなく、`摂食歴→損食歴`、`肺吸虫→胸吸虫`、`ヘルペス→ヘルベス` のような誤読が残ります。**医療数値・薬剤名は必ず原本と照合してください**（`要確認.md` を活用）。速度は1ページあたり数秒（CPU）で、Tesseractの並列処理と同程度です。
 
-NDLOCRの公式`--sourcedir`を1回実行して全ページOCRした後、生成TXTとJSON座標からMarkdownと検索可能PDFを作成します。テキストレイヤーはおおむね文字付近に配置しますが、特に縦書きの位置合わせは十分検証されていません。**NDLOCRエンジン本体はこのZIPに同梱していません。**
+### 1. NDLOCR-Lite（推奨）
+
+国立国会図書館の[NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite)（CC BY 4.0。レイアウト認識モデルのバックボーンにはDINOv3を使用しており、そのライセンスにも従います）を使います。
+
+- **自動導入**: `setup.bat` が公式リポジトリのZIP（約150MB）を `%LOCALAPPDATA%\EbookTextStudio\ndlocr-lite` に取得し、専用の仮想環境 `%LOCALAPPDATA%\EbookTextStudio\ndl-venv` に必要なライブラリを入れます。不要なら `setup.bat -NoNdl`。失敗してもTesseractは使えます（再実行でやり直せます）。
+- GUIの「OCRエンジン」で選び、コマンド欄は `auto`（導入済みのものを使う）のままにします。自分で用意した場合は、`ndlocr-lite` コマンド、または公式ソース版の `src/ocr.py` のフルパスを指定できます。CLIは `--engine NDLOCR-Lite`（導入済みなら省略可）。
+- 全ページを公式の `--sourcedir` で1回実行し、生成TXTとJSON座標からMarkdownと検索可能PDFを作ります。縦書きの位置合わせは十分検証されていません。
+- exe版では、NDLOCR-Liteの導入にPythonが必要です（`install_ocr.bat` はPythonが見つかる場合のみ導入します）。
+- 場所を変えたい場合は環境変数 `EBOOKTEXT_NDL_HOME`（リポジトリ）、`EBOOKTEXT_NDL_PYTHON`（Python）で指定できます。
+
+### 2. Tesseract（軽量・追加導入不要）
+
+`Tesseract` を選択し、言語は `jpn+eng`、PSM=3（レイアウト自動）を推奨します。単段組ならPSM=4/6、文章の配置が変則的なら11も試せます。画質補正・低信頼行の再読み・並列処理が使えます。OCR前処理はテキスト抽出時のみで、検索可能PDFの画像には原スクリーンショットを用います。
+
+**注意:** 数式、図表、縦組、医学用語は誤認識されます。色つきの表や小さい脚注では特に崩れやすいため、NDLOCR-Liteの利用を勧めます。
 
 ## 保存されるファイル
 
