@@ -36,7 +36,7 @@ class OCROptions:
     preprocess: bool = True
     upscale: bool = True
     prefer_native_pdf: bool = True
-    ndl_command: str = "ndlocr-lite"
+    ndl_command: str = "auto"
     tesseract_exe: str = ""
     reread_low_conf: bool = True   # re-read low-confidence lines one by one (Tesseract only)
     workers: int = 0          # parallel Tesseract pages; 0 = auto (CPU count, max 8)
@@ -90,11 +90,47 @@ def _read_native(book: Path) -> dict[str, str]:
     return {}
 
 
+def ndl_support_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return Path(base) / "EbookTextStudio"
+
+
+def managed_ndl() -> list[str] | None:
+    """Command for the NDLOCR-Lite that setup.bat installs (its own venv + the repo's src/ocr.py).
+
+    EBOOKTEXT_NDL_HOME / EBOOKTEXT_NDL_PYTHON override the locations (used by tests and by people
+    who keep NDLOCR-Lite elsewhere)."""
+    home = Path(os.environ.get("EBOOKTEXT_NDL_HOME") or ndl_support_dir() / "ndlocr-lite")
+    script = home / "src" / "ocr.py"
+    if os.environ.get("EBOOKTEXT_NDL_PYTHON"):
+        python = Path(os.environ["EBOOKTEXT_NDL_PYTHON"])
+    else:
+        venv = ndl_support_dir() / "ndl-venv"
+        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if script.is_file() and python.is_file():
+        return [str(python), str(script)]
+    return None
+
+
+def ndl_available() -> bool:
+    try:
+        _check_ndl_command("auto")
+        return True
+    except RuntimeError:
+        return False
+
+
 def _check_ndl_command(command: str) -> list[str]:
-    # Accept either the official uv-installed command or an explicit ocr.py path.
+    # "auto" (or empty): the NDLOCR-Lite installed by setup.bat, else an `ndlocr-lite` command on PATH.
+    # Otherwise: an explicit command or the path of ocr.py.
     command = command.strip().strip('"')
-    if not command:
-        raise RuntimeError("NDLOCR-Liteのコマンド欄を指定してください。")
+    if command in ("", "auto"):
+        managed = managed_ndl()
+        if managed:
+            return managed
+        if shutil.which("ndlocr-lite"):
+            return ["ndlocr-lite"]
+        raise RuntimeError("NDLOCR-Liteが導入されていません。setup.batを実行するか、公式READMEに従ってCLIをセットアップしてください。")
     if command.lower().endswith(".py") and Path(command).is_file():
         if getattr(sys, "frozen", False):
             # sys.executable is the packaged exe, so a separate Python is needed to run ocr.py.

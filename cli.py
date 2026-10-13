@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ebooktext.core import EXTENSIONS, page_images, project_dir
 from ebooktext.importer import import_images, import_pdf
-from ebooktext.ocr import OCROptions, convert_book
+from ebooktext.ocr import OCROptions, convert_book, ndl_available
 from ebooktext.pageprep import ImportOptions
 
 
@@ -38,9 +38,10 @@ def main() -> int:
     parser.add_argument('--input', required=True, type=Path, help='one: image folder/PDF; batch: folder containing subfolders/PDFs')
     parser.add_argument('--base', required=True, type=Path, help='book project destination base directory')
     parser.add_argument('--title', help='book title (required for one)')
-    parser.add_argument('--engine', choices=['Tesseract', 'NDLOCR-Lite'], default='Tesseract')
+    parser.add_argument('--engine', choices=['Tesseract', 'NDLOCR-Lite'], default=None,
+                        help='default: NDLOCR-Lite when installed (setup.bat), otherwise Tesseract')
     parser.add_argument('--lang', default='jpn+eng')
-    parser.add_argument('--ndl-command', default='ndlocr-lite')
+    parser.add_argument('--ndl-command', default='auto', help='auto = the install from setup.bat, else ndlocr-lite on PATH')
     parser.add_argument('--psm', type=int, default=3, choices=[3, 4, 6, 11, 12])
     parser.add_argument('--no-native', action='store_true')
     parser.add_argument('--no-strip-bars', action='store_true', help='keep dark status/home bars at the image edges')
@@ -50,7 +51,9 @@ def main() -> int:
     parser.add_argument('--no-reread', action='store_true', help='skip the second pass on low-confidence lines')
     parser.add_argument('--no-clean', action='store_true', help='keep running headers, page numbers, copyright lines')
     args = parser.parse_args()
-    opts = OCROptions(engine=args.engine, lang=args.lang, psm=args.psm,
+    engine = args.engine or ('NDLOCR-Lite' if ndl_available() else 'Tesseract')
+    print(f'OCRエンジン: {engine}')
+    opts = OCROptions(engine=engine, lang=args.lang, psm=args.psm,
                       ndl_command=args.ndl_command, prefer_native_pdf=not args.no_native,
                       clean_text=not args.no_clean, reread_low_conf=not args.no_reread, workers=args.workers)
     imp = ImportOptions(strip_bars=not args.no_strip_bars, split_spreads=not args.no_split,

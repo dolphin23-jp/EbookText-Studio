@@ -14,7 +14,7 @@ from ebooktext import __version__
 from ebooktext.capture import CaptureOptions, KEYS, run_capture
 from ebooktext.core import project_dir
 from ebooktext.importer import import_images, import_pdf
-from ebooktext.ocr import OCROptions, convert_book
+from ebooktext.ocr import OCROptions, convert_book, ndl_available
 from ebooktext.pageprep import ImportOptions
 
 NAVY = "#183153"
@@ -140,10 +140,10 @@ class App(tk.Tk):
         self.countdown_var = tk.StringVar(value="5")
         self.key_var = tk.StringVar(value=next(iter(KEYS)))
         self.format_var = tk.StringVar(value="PNG")
-        self.engine_var = tk.StringVar(value="Tesseract")
+        self.engine_var = tk.StringVar(value="NDLOCR-Lite" if ndl_available() else "Tesseract")
         self.lang_var = tk.StringVar(value="jpn+eng")
         self.psm_var = tk.StringVar(value="3 (自動)")
-        self.ndl_var = tk.StringVar(value="ndlocr-lite")
+        self.ndl_var = tk.StringVar(value="auto")
         self.trim_var = tk.BooleanVar(value=False)
         self.strip_bars_var = tk.BooleanVar(value=True)
         self.split_var = tk.BooleanVar(value=True)
@@ -228,7 +228,7 @@ class App(tk.Tk):
                      values=["3 (自動)", "4 (単段)", "6 (ブロック)", "11 (散文)", "12 (散文/方向)"]).pack(side="left")
         ndl_line = ttk.Frame(ocr)
         ndl_line.pack(fill="x", pady=7)
-        ttk.Label(ndl_line, text="NDLOCR-Liteコマンド / src/ocr.py パス").pack(side="left", padx=(0, 8))
+        ttk.Label(ndl_line, text="NDLOCR-Lite（auto = setup.batで導入したもの）/ コマンド / src/ocr.py パス").pack(side="left", padx=(0, 8))
         ttk.Entry(ndl_line, textvariable=self.ndl_var, width=55).pack(side="left", fill="x", expand=True)
         flags = ttk.Frame(ocr)
         flags.pack(fill="x", pady=(0, 8))
