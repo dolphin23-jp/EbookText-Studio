@@ -78,3 +78,15 @@ def test_review_reasons():
 def test_markdown_notes():
     md = render_markdown('t', [('page_00001.png', '本文')], {'page_00001.png': ['page: 5']})
     assert '<!-- source: page_00001.png, page: 5 -->' in md
+
+
+def test_prepare_ocr_ex_transform_roundtrip():
+    from ebooktext.core import prepare_ocr_ex
+    im = Image.new('RGB', (800, 1000), 'white')
+    ImageDraw.Draw(im).rectangle((100, 200, 700, 800), fill='black')
+    out, (sx, sy, dx, dy) = prepare_ocr_ex(im, upscale=True, autocontrast=False, trim=True)
+    assert sx > 1 and sy > 1
+    # the black block's left edge, mapped back, is near x=100 in the input image
+    gray = out.convert('L')
+    xs = [x for x in range(gray.width) if gray.getpixel((x, gray.height // 2)) < 50]
+    assert abs(xs[0] / sx + dx - 100) < 3

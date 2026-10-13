@@ -46,12 +46,13 @@ def main() -> int:
     parser.add_argument('--no-strip-bars', action='store_true', help='keep dark status/home bars at the image edges')
     parser.add_argument('--no-split', action='store_true', help='do not split two-page spreads')
     parser.add_argument('--rtl', action='store_true', help='spreads read right-to-left (vertical-text books)')
+    parser.add_argument('--workers', type=int, default=0, help='pages OCRed in parallel (Tesseract); 0 = auto')
     parser.add_argument('--no-reread', action='store_true', help='skip the second pass on low-confidence lines')
     parser.add_argument('--no-clean', action='store_true', help='keep running headers, page numbers, copyright lines')
     args = parser.parse_args()
     opts = OCROptions(engine=args.engine, lang=args.lang, psm=args.psm,
                       ndl_command=args.ndl_command, prefer_native_pdf=not args.no_native,
-                      clean_text=not args.no_clean, reread_low_conf=not args.no_reread)
+                      clean_text=not args.no_clean, reread_low_conf=not args.no_reread, workers=args.workers)
     imp = ImportOptions(strip_bars=not args.no_strip_bars, split_spreads=not args.no_split,
                         right_to_left=args.rtl)
     if args.action == 'one':
