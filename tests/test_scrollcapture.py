@@ -279,3 +279,12 @@ def test_existing_page_turn_images_are_not_overwritten(tmp_path):
     run(tmp_path, SimViewer(make_document(4000), 600, 100), max_steps=40, units=4)
     names = [p.name for p in page_images(tmp_path / "pages")]
     assert "page_00007.png" in names and names[-1] > "page_00007.png"
+
+
+def test_slice_pad_adds_blank_margin_and_keeps_rows(tmp_path):
+    doc = make_document(6000)
+    run(tmp_path, SimViewer(doc, 600, 100), max_steps=40, units=4, slice_pad=24)
+    parts = [np.asarray(Image.open(p).convert("RGB")) for p in page_images(tmp_path / "pages")]
+    assert all(np.all(p[:24] == p[24]) and np.all(p[-24:] == p[-25]) for p in parts)   # plain margins
+    out = np.concatenate([p[24:-24] for p in parts], axis=0)
+    assert np.array_equal(out, doc[:len(out)])                 # content itself is unchanged

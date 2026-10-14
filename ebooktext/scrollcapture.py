@@ -53,6 +53,8 @@ class ScrollOptions:
     blank_rechecks: int = 3                # extra looks at new rows that are completely blank
     flush_on_stop: bool = False            # also write the unfinished tail after F8 / a failure
     image_format: str = "PNG"
+    slice_pad: int = 0                     # blank margin added above/below every output image (OCR drops
+                                           # lines that touch the very edge of an image)
 
 
 class ScrollBackend(Protocol):
@@ -183,10 +185,15 @@ class ScrollCapture:
         for sl in slices:
             ext = "jpg" if self.opts.image_format == "JPEG" else "png"
             dst = self.image_dir / f"page_{self.next_page:05d}.{ext}"
+            img = sl.image
+            if self.opts.slice_pad > 0:
+                # Slices are cut in blank rows, so repeating the edge row gives a seamless margin.
+                p = self.opts.slice_pad
+                img = Image.fromarray(np.pad(np.asarray(img.convert("RGB")), ((p, p), (0, 0), (0, 0)), mode="edge"))
             if ext == "jpg":
-                sl.image.save(dst, "JPEG", quality=94, subsampling=0)
+                img.save(dst, "JPEG", quality=94, subsampling=0)
             else:
-                sl.image.save(dst, "PNG", optimize=False)
+                img.save(dst, "PNG", optimize=False)
             self.next_page += 1
             self.written += 1
             if sl.forced:

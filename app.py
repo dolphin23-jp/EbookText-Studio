@@ -380,7 +380,7 @@ class App(tk.Tk):
                 raise ValueError()
             opts = ScrollOptions(region=self.region, max_steps=steps, delay=delay, countdown=countdown,
                                  method=self.scroll_method_var.get(), units=units, target_overlap=overlap,
-                                 crop_right=crop_right, image_format=self.format_var.get())
+                                 crop_right=crop_right, image_format=self.format_var.get(), slice_pad=24)
             book = self.book()
         except (ValueError, OSError):
             messagebox.showerror("設定", "最大回数(1～20000)、待機秒数(0.2～60)、開始猶予(2～60)、"
