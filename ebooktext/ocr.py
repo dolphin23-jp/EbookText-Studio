@@ -22,6 +22,7 @@ import fitz
 from PIL import Image
 
 from .audit import audit_book, write_audit
+from .repair import Repair, repair_book
 from .linereread import read_page
 from .textclean import clean_pages, render_review, review_lines
 from .core import (_write_json_atomic, file_sha256, normalize_text, page_images,
@@ -43,6 +44,7 @@ class OCROptions:
     workers: int = 0          # parallel Tesseract pages; 0 = auto (CPU count, max 8)
     clean_text: bool = True   # drop status bar / copyright / running headers, lift page numbers
     audit: bool = True        # report ink the OCR left unread (output/OCR抜け確認.md)
+    repair: bool = True       # re-read the spots the audit flagged and merge them into the text
 
 
 def _find_tesseract(explicit: str = "") -> str:
@@ -318,6 +320,65 @@ def _tesseract_pages(paths: list[Path], opts: OCROptions, stop: threading.Event,
     return results
 
 
+def _make_reader(opts: OCROptions, stop: threading.Event, status: Callable[[str], None],
+                 work_dir: Path) -> Callable[[list[Image.Image]], list[str]]:
+    """Read many small crops with the same engine as the page OCR."""
+    def read(crops: list[Image.Image]) -> list[str]:
+        if opts.engine == "NDLOCR-Lite":
+            folder = work_dir / "crops"
+            folder.mkdir(parents=True, exist_ok=True)
+            paths = []
+            for i, crop in enumerate(crops):
+                path = folder / f"crop_{i:04d}.png"
+                crop.save(path)
+                paths.append(path)
+            found = _ndlocrlite_pending(paths, opts, stop, status, work_dir / "ndl")
+            return [found[p.name][0] for p in paths]
+        out = []
+        for crop in crops:
+            if stop.is_set():
+                raise InterruptedError("OCRを停止しました。")
+            pre, _ = prepare_ocr_ex(crop, upscale=False, autocontrast=opts.preprocess)
+            out.append(read_page(pre, opts.lang, 7, reread=False)[0])
+        return out
+    return read
+
+
+def _audit_and_repair(images: list[Path], texts: dict[str, str], boxes_by_name: dict[str, list[dict]],
+                      opts: OCROptions, stop: threading.Event,
+                      status: Callable[[str], None]) -> tuple[list, list[Repair]]:
+    """Audit the OCR result and, if wanted, re-read the flagged spots. Advisory: never fails a conversion."""
+    if not opts.audit:
+        return [], []
+    repairs: list[Repair] = []
+    try:
+        for name in list(boxes_by_name):
+            boxes_by_name[name] = [dict(b) for b in boxes_by_name[name]]   # never touch the cached lists
+        audits = audit_book(images, boxes_by_name)
+        found = sum(len(a.findings) for a in audits)
+        if found and opts.repair:
+            status(f"OCR抜けの疑い{found}箇所を切り出して読み直しています")
+            with tempfile.TemporaryDirectory(prefix="ebooktext_fix_") as td:
+                repairs = repair_book(images, audits, texts, boxes_by_name,
+                                      _make_reader(opts, stop, status, Path(td)), stop)
+            audits = audit_book(images, boxes_by_name)
+            done = sum(1 for r in repairs if r.done)
+            status(f"読み直して{done}箇所を本文に補いました（補えなかった{len(repairs) - done}箇所）")
+        bad = [a for a in audits if a.findings]
+        if bad:
+            status(f"OCR抜けの疑いが残る箇所: {len(bad)}枚・{sum(len(a.findings) for a in bad)}箇所"
+                   "（output/OCR抜け確認.md、赤枠画像はoutput/audit/）")
+        else:
+            status("OCR抜けの疑いは残っていません。")
+        return audits, repairs
+    except InterruptedError:
+        raise
+    except Exception as exc:  # advisory only
+        status(f"OCR抜け確認をスキップしました: {exc}")
+        return [], []
+
+
+
 def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event,
                  status: Callable[[str], None]) -> int:
     book = Path(book)
@@ -433,6 +494,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
             boxes_by_name[path.name] = []
 
     _write_json_atomic(cache_json_path, {"entries": {**old_entries, **new_entries}})
+    audits, repairs = _audit_and_repair(images, new_text, boxes_by_name, opts, stop, status)
     assembled = []
     for path in images:
         raw = new_text[path.name]
@@ -456,18 +518,11 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     flagged = review_lines(assembled)
     (output / "要確認.md").write_text(render_review(title, flagged), encoding="utf-8")
     status(f"数値・単位を含む要確認行: {len(flagged)}行（output/要確認.md）")
-    if opts.audit:
+    if audits or repairs:
         try:
-            audits = audit_book(images, boxes_by_name)
-            write_audit(book, title, images, audits)
-            bad = [a for a in audits if a.findings]
-            if bad:
-                n = sum(len(a.findings) for a in bad)
-                status(f"OCR抜けの疑い: {len(bad)}枚・{n}箇所（output/OCR抜け確認.md、赤枠画像はoutput/audit/）")
-            else:
-                status("OCR抜けの疑いは見つかりませんでした。")
-        except Exception as exc:  # the audit is advisory and must never fail a conversion
-            status(f"OCR抜け確認をスキップしました: {exc}")
+            write_audit(book, title, images, audits, repairs)
+        except OSError as exc:
+            status(f"OCR抜け確認の保存をスキップしました: {exc}")
     status("原画像PDFを作成中")
     _write_image_pdf(images, output / "画像PDF.pdf", stop, status)
     status("検索可能PDFを作成中")
