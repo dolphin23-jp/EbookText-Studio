@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from ebooktext import __version__
 from ebooktext.capture import CaptureOptions, KEYS, run_capture
 from ebooktext.core import project_dir
-from ebooktext.importer import import_images, import_pdf
+from ebooktext.importer import find_pdfs, import_images, import_pdf, import_pdfs
 from ebooktext.ocr import OCROptions, convert_book, ndl_available
 from ebooktext.pageprep import ImportOptions
 from ebooktext.scrollcapture import SCROLL_METHODS, ScrollOptions, run_scroll_capture
@@ -234,6 +234,8 @@ class App(tk.Tk):
         ttk.Checkbutton(prep, text="右開き（縦書き本）", variable=self.rtl_var).pack(side="left")
         self.pdf_btn = ttk.Button(actions, text="PDFを取り込む", command=self.pick_pdf)
         self.pdf_btn.pack(side="left", padx=7)
+        self.pdf_dir_btn = ttk.Button(actions, text="PDFフォルダを取り込む（章ごとのPDFを1冊に）", command=self.pick_pdf_folder)
+        self.pdf_dir_btn.pack(side="left", padx=7)
         ttk.Label(source, text="※ 撮影中は本を最前面にしてください。F8で停止。同じ画面が3回続くと終了。既存の画像には追記します。",
                   foreground="#455a77").pack(anchor="w", pady=(7, 0))
         ttk.Label(source, text="※ 連続スクロール: 本文が滑らかにスクロールするビューア向け。1回の量は「自動」が推奨（実測して調整）。"
@@ -414,6 +416,22 @@ class App(tk.Tk):
                 self.launch("PDF取り込み中", lambda: import_pdf(book, Path(file), self.emit, opts=self.import_options()))
             except ValueError as exc:
                 messagebox.showerror("書籍名", str(exc))
+
+    def pick_pdf_folder(self):
+        directory = filedialog.askdirectory(title="PDFが入ったフォルダを選択（サブフォルダ内のPDFも章順に取り込みます）")
+        if not directory:
+            return
+        files = find_pdfs(Path(directory))
+        if not files:
+            messagebox.showinfo("PDFフォルダ", "このフォルダにPDFがありません。")
+            return
+        try:
+            book = self.book()
+        except ValueError as exc:
+            messagebox.showerror("書籍名", str(exc))
+            return
+        self.emit(f"{len(files)}個のPDFを次の順に取り込みます: " + " → ".join(f.parent.name + "/" + f.name for f in files))
+        self.launch("PDF取り込み中", lambda: import_pdfs(book, files, self.emit, opts=self.import_options()))
 
     def start_ocr(self):
         try:
