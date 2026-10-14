@@ -16,12 +16,15 @@ from ebooktext.core import project_dir
 from ebooktext.importer import import_images, import_pdf
 from ebooktext.ocr import OCROptions, convert_book, ndl_available
 from ebooktext.pageprep import ImportOptions
+from ebooktext.scrollcapture import SCROLL_METHODS, ScrollOptions, run_scroll_capture
 
 NAVY = "#183153"
 BLUE = "#2c5f9a"
 WHITE = "#ffffff"
 SUBTLE = "#e8eff7"
 DEFAULT_DIR = Path.home() / "Documents" / "EbookTextStudio"
+MODE_PAGES = "ページ送り（従来）"
+MODE_SCROLL = "連続スクロール"
 
 
 def set_windows_dpi_awareness():
@@ -139,6 +142,12 @@ class App(tk.Tk):
         self.delay_var = tk.StringVar(value="1.5")
         self.countdown_var = tk.StringVar(value="5")
         self.key_var = tk.StringVar(value=next(iter(KEYS)))
+        self.mode_var = tk.StringVar(value=MODE_PAGES)
+        self.scroll_method_var = tk.StringVar(value=next(iter(SCROLL_METHODS)))
+        self.scroll_units_var = tk.StringVar(value="自動")
+        self.scroll_overlap_var = tk.StringVar(value="25")
+        self.scroll_steps_var = tk.StringVar(value="60")
+        self.crop_right_var = tk.StringVar(value="0")
         self.format_var = tk.StringVar(value="PNG")
         self.engine_var = tk.StringVar(value="NDLOCR-Lite" if ndl_available() else "Tesseract")
         self.lang_var = tk.StringVar(value="jpn+eng")
@@ -197,6 +206,18 @@ class App(tk.Tk):
         ttk.Combobox(opts, textvariable=self.key_var, values=list(KEYS), state="readonly", width=17).pack(side="left")
         ttk.Label(opts, text="形式").pack(side="left", padx=(12, 5))
         ttk.Combobox(opts, textvariable=self.format_var, values=["PNG", "JPEG"], state="readonly", width=6).pack(side="left")
+        scroll = ttk.Frame(source)
+        scroll.pack(fill="x", pady=(2, 6))
+        ttk.Label(scroll, text="撮影方式").pack(side="left", padx=(2, 5))
+        ttk.Combobox(scroll, textvariable=self.mode_var, values=[MODE_PAGES, MODE_SCROLL],
+                     state="readonly", width=16).pack(side="left", padx=(0, 12))
+        ttk.Label(scroll, text="【連続スクロール】操作").pack(side="left", padx=(0, 5))
+        ttk.Combobox(scroll, textvariable=self.scroll_method_var, values=list(SCROLL_METHODS),
+                     state="readonly", width=12).pack(side="left", padx=(0, 8))
+        for label, var, width in [("1回の量", self.scroll_units_var, 5), ("重なり%", self.scroll_overlap_var, 4),
+                                  ("最大回数", self.scroll_steps_var, 5), ("右端除外px", self.crop_right_var, 4)]:
+            ttk.Label(scroll, text=label).pack(side="left", padx=(2, 4))
+            ttk.Entry(scroll, textvariable=var, width=width).pack(side="left", padx=(0, 8))
         actions = ttk.Frame(source)
         actions.pack(fill="x", pady=(3, 0))
         self.start_btn = ttk.Button(actions, text="▶ 自動キャプチャ開始", command=self.start_capture, style="Accent.TButton")
@@ -213,6 +234,9 @@ class App(tk.Tk):
         self.pdf_btn.pack(side="left", padx=7)
         ttk.Label(source, text="※ 撮影中は本を最前面にしてください。F8で停止。同じ画面が3回続くと終了。既存の画像には追記します。",
                   foreground="#455a77").pack(anchor="w", pady=(7, 0))
+        ttk.Label(source, text="※ 連続スクロール: 本文が滑らかにスクロールするビューア向け。1回の量は「自動」が推奨（実測して調整）。"
+                               "撮影範囲にスクロールバーを含めない／含める場合は右端除外pxを指定。",
+                  foreground="#455a77", wraplength=820, justify="left").pack(anchor="w", pady=(2, 0))
 
         ocr = ttk.LabelFrame(container, text="③ OCRして文章を作る", padding=10)
         ocr.pack(fill="x", pady=(0, 11))
@@ -324,6 +348,9 @@ class App(tk.Tk):
         if not self.region:
             messagebox.showwarning("範囲が未指定", "まず「画面で撮影範囲を選択」を押してください。")
             return
+        if self.mode_var.get() == MODE_SCROLL:
+            self.start_scroll_capture()
+            return
         try:
             pages = int(self.pages_var.get())
             delay = float(self.delay_var.get())
@@ -338,6 +365,29 @@ class App(tk.Tk):
             return
         self.launch("キャプチャを開始します。5秒以内に電子書籍を前面に出してください。",
                     lambda: run_capture(book, opts, self.stop_event, self.emit), minimize=True)
+
+    def start_scroll_capture(self):
+        try:
+            steps = int(self.scroll_steps_var.get())
+            delay = float(self.delay_var.get())
+            countdown = int(self.countdown_var.get())
+            units_text = self.scroll_units_var.get().strip()
+            units = 0 if units_text in ("", "自動", "auto") else int(units_text)
+            overlap = float(self.scroll_overlap_var.get()) / 100
+            crop_right = int(self.crop_right_var.get())
+            if not (1 <= steps <= 20000 and 0.2 <= delay <= 60 and 2 <= countdown <= 60 and 0 <= units <= 50
+                    and 0.12 <= overlap <= 0.8 and 0 <= crop_right <= 200):
+                raise ValueError()
+            opts = ScrollOptions(region=self.region, max_steps=steps, delay=delay, countdown=countdown,
+                                 method=self.scroll_method_var.get(), units=units, target_overlap=overlap,
+                                 crop_right=crop_right, image_format=self.format_var.get(), slice_pad=24)
+            book = self.book()
+        except (ValueError, OSError):
+            messagebox.showerror("設定", "最大回数(1～20000)、待機秒数(0.2～60)、開始猶予(2～60)、"
+                                       "1回の量(自動または0～50)、重なり(12～80%)、右端除外(0～200px)を確認してください。")
+            return
+        self.launch("連続スクロールのキャプチャを開始します。5秒以内に電子書籍を前面に出し、本文をクリックしてください。",
+                    lambda: run_scroll_capture(book, opts, self.stop_event, self.emit), minimize=True)
 
     def import_options(self) -> ImportOptions:
         return ImportOptions(strip_bars=self.strip_bars_var.get(), split_spreads=self.split_var.get(),
