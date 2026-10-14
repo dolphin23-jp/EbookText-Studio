@@ -159,6 +159,7 @@ class App(tk.Tk):
         self.rtl_var = tk.BooleanVar(value=False)
         self.clean_var = tk.BooleanVar(value=True)
         self.reread_var = tk.BooleanVar(value=True)
+        self.audit_var = tk.BooleanVar(value=True)
         self.native_var = tk.BooleanVar(value=True)
         self.preprocess_var = tk.BooleanVar(value=True)
         self.upscale_var = tk.BooleanVar(value=True)
@@ -261,7 +262,8 @@ class App(tk.Tk):
         ttk.Checkbutton(flags, text="白余白を自動トリミング", variable=self.trim_var).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(flags, text="PDFの既存テキスト層を優先", variable=self.native_var).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(flags, text="柱・ページ番号・版権表記を本文から外す", variable=self.clean_var).pack(side="left", padx=(0, 16))
-        ttk.Checkbutton(flags, text="低信頼の行を再読み", variable=self.reread_var).pack(side="left")
+        ttk.Checkbutton(flags, text="低信頼の行を再読み", variable=self.reread_var).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(flags, text="OCR抜けを確認", variable=self.audit_var).pack(side="left")
         run = ttk.Frame(ocr)
         run.pack(fill="x")
         self.ocr_btn = ttk.Button(run, text="▶ OCR / Markdown / PDF を生成", command=self.start_ocr,
@@ -418,7 +420,8 @@ class App(tk.Tk):
                               psm=int(self.psm_var.get().split()[0]),
                               trim=self.trim_var.get(), preprocess=self.preprocess_var.get(),
                               upscale=self.upscale_var.get(), prefer_native_pdf=self.native_var.get(),
-                              ndl_command=self.ndl_var.get(), clean_text=self.clean_var.get(), reread_low_conf=self.reread_var.get())
+                              ndl_command=self.ndl_var.get(), clean_text=self.clean_var.get(), reread_low_conf=self.reread_var.get(),
+                              audit=self.audit_var.get())
         except (ValueError, OSError) as exc:
             messagebox.showerror("設定", str(exc))
             return

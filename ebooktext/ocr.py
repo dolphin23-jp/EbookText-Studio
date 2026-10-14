@@ -21,6 +21,7 @@ from typing import Callable
 import fitz
 from PIL import Image
 
+from .audit import audit_book, write_audit
 from .linereread import read_page
 from .textclean import clean_pages, render_review, review_lines
 from .core import (_write_json_atomic, file_sha256, normalize_text, page_images,
@@ -41,6 +42,7 @@ class OCROptions:
     reread_low_conf: bool = True   # re-read low-confidence lines one by one (Tesseract only)
     workers: int = 0          # parallel Tesseract pages; 0 = auto (CPU count, max 8)
     clean_text: bool = True   # drop status bar / copyright / running headers, lift page numbers
+    audit: bool = True        # report ink the OCR left unread (output/OCR抜け確認.md)
 
 
 def _find_tesseract(explicit: str = "") -> str:
@@ -454,6 +456,18 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     flagged = review_lines(assembled)
     (output / "要確認.md").write_text(render_review(title, flagged), encoding="utf-8")
     status(f"数値・単位を含む要確認行: {len(flagged)}行（output/要確認.md）")
+    if opts.audit:
+        try:
+            audits = audit_book(images, boxes_by_name)
+            write_audit(book, title, images, audits)
+            bad = [a for a in audits if a.findings]
+            if bad:
+                n = sum(len(a.findings) for a in bad)
+                status(f"OCR抜けの疑い: {len(bad)}枚・{n}箇所（output/OCR抜け確認.md、赤枠画像はoutput/audit/）")
+            else:
+                status("OCR抜けの疑いは見つかりませんでした。")
+        except Exception as exc:  # the audit is advisory and must never fail a conversion
+            status(f"OCR抜け確認をスキップしました: {exc}")
     status("原画像PDFを作成中")
     _write_image_pdf(images, output / "画像PDF.pdf", stop, status)
     status("検索可能PDFを作成中")
