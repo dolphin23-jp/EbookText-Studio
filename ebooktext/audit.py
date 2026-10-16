@@ -220,7 +220,7 @@ def annotate(image: Image.Image, audit: PageAudit) -> Image.Image:
     return img
 
 
-def render_report(title: str, audits: list[PageAudit]) -> str:
+def render_report(title: str, audits: list[PageAudit], repairs: list | None = None) -> str:
     flagged = [a for a in audits if a.findings]
     skipped = [a for a in audits if a.skipped]
     lines = [f"# OCR抜け確認: {title}", "",
@@ -230,6 +230,20 @@ def render_report(title: str, audits: list[PageAudit]) -> str:
     if skipped:
         lines.append(f"- 位置情報が無く確認できなかった画像: {len(skipped)}枚")
     lines.append("")
+    if repairs:
+        done = [r for r in repairs if r.done]
+        lines += [f"## 自動で補った箇所（{len(done)}件）／補えなかった箇所（{len(repairs) - len(done)}件）", "",
+                  "疑い箇所だけを切り出して読み直し、本文に入れたものです。内容は必ず画像と見比べてください。", ""]
+        for r in repairs:
+            snippet = r.text if len(r.text) <= 40 else r.text[:40] + "…"
+            if r.done:
+                extra = f"（元: {r.old}）" if r.old else ""
+                lines.append(f"- {r.name} 上から{r.y0}px: {r.action} 「{snippet}」{extra}")
+            else:
+                lines.append(f"- {r.name} 上から{r.y0}px: 未反映（{r.reason}）")
+        lines.append("")
+        if flagged:
+            lines += ["## 補修後もまだ疑いが残る箇所", ""]
     for a in flagged:
         lines.append(f"## {a.name}（画像内の行 約{a.lines}行）")
         for f in a.findings:
@@ -242,7 +256,8 @@ def render_report(title: str, audits: list[PageAudit]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_audit(book: Path, title: str, images: list[Path], audits: list[PageAudit]) -> Path:
+def write_audit(book: Path, title: str, images: list[Path], audits: list[PageAudit],
+                repairs: list | None = None) -> Path:
     """Write output/OCR抜け確認.md, output/ocr_audit.json and red-boxed copies in output/audit/."""
     import json
     output = Path(book) / "output"
@@ -260,5 +275,8 @@ def write_audit(book: Path, title: str, images: list[Path], audits: list[PageAud
     (output / "ocr_audit.json").write_text(
         json.dumps([asdict(a) for a in audits], ensure_ascii=False, indent=1), encoding="utf-8")
     report = output / "OCR抜け確認.md"
-    report.write_text(render_report(title, audits), encoding="utf-8")
+    report.write_text(render_report(title, audits, repairs), encoding="utf-8")
+    if repairs:
+        (output / "ocr_repair.json").write_text(
+            json.dumps([asdict(r) for r in repairs], ensure_ascii=False, indent=1), encoding="utf-8")
     return report
