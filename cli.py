@@ -50,12 +50,15 @@ def main() -> int:
     parser.add_argument('--workers', type=int, default=0, help='pages OCRed in parallel (Tesseract); 0 = auto')
     parser.add_argument('--no-reread', action='store_true', help='skip the second pass on low-confidence lines')
     parser.add_argument('--no-clean', action='store_true', help='keep running headers, page numbers, copyright lines')
+    parser.add_argument('--no-structure', action='store_true', help='page-by-page 全文.md without tables/figures/headings')
+    parser.add_argument('--no-numcheck', action='store_true', help='do not re-read short numbers with Tesseract')
     args = parser.parse_args()
     engine = args.engine or ('NDLOCR-Lite' if ndl_available() else 'Tesseract')
     print(f'OCRエンジン: {engine}')
     opts = OCROptions(engine=engine, lang=args.lang, psm=args.psm,
                       ndl_command=args.ndl_command, prefer_native_pdf=not args.no_native,
-                      clean_text=not args.no_clean, reread_low_conf=not args.no_reread, workers=args.workers)
+                      clean_text=not args.no_clean, reread_low_conf=not args.no_reread, workers=args.workers,
+                      structure=not args.no_structure, number_check=not args.no_numcheck)
     imp = ImportOptions(strip_bars=not args.no_strip_bars, split_spreads=not args.no_split,
                         right_to_left=args.rtl)
     if args.action == 'one':
