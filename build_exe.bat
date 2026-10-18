@@ -11,6 +11,7 @@ if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onedir --windowed ^
   --name EbookTextStudio ^
   --collect-submodules pynput ^
+  --collect-submodules ebooktext ^
   --collect-all pytesseract ^
   app.py
 if errorlevel 1 goto failed

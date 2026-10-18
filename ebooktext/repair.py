@@ -172,7 +172,7 @@ def _apply_gap(f: Finding, new: str, lines: list[str], boxes: list[dict], name: 
                 rep.action = "行として挿入"
                 placed = True
     if placed:
-        boxes.append({"text": new, "boundingBox": _quad(f)})
+        boxes.append({"text": new, "boundingBox": _quad(f), "repaired": True})
     return rep
 
 

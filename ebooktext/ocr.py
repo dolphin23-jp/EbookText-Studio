@@ -45,6 +45,8 @@ class OCROptions:
     clean_text: bool = True   # drop status bar / copyright / running headers, lift page numbers
     audit: bool = True        # report ink the OCR left unread (output/OCR抜け確認.md)
     repair: bool = True       # re-read the spots the audit flagged and merge them into the text
+    structure: bool = True    # 全文.md with headings, real tables and figures (structure.py)
+    number_check: bool = True  # re-read short numbers (table cells) with Tesseract
 
 
 def _find_tesseract(explicit: str = "") -> str:
@@ -149,7 +151,8 @@ def _check_ndl_command(command: str) -> list[str]:
 
 
 def _ndlocrlite_pending(pending: list[Path], opts: OCROptions, stop: threading.Event,
-                        status: Callable[[str], None], work_dir: Path) -> dict[str, tuple[str, list[dict]]]:
+                        status: Callable[[str], None], work_dir: Path) -> dict[str, tuple[str, list[dict], str]]:
+    """Run the NDLOCR-Lite batch CLI. Returns name -> (text, line boxes, layout XML)."""
     cmd = _check_ndl_command(opts.ndl_command)
     # Invoke the official batch CLI once: loading the models per-page is prohibitively slow.
     batch = work_dir / "input"
@@ -191,7 +194,9 @@ def _ndlocrlite_pending(pending: list[Path], opts: OCROptions, stop: threading.E
             for group in raw.get("contents", []):
                 if isinstance(group, list):
                     boxes += [item for item in group if isinstance(item, dict)]
-        results[path.name] = (normalize_text(text), boxes)
+        xml_path = out / (stem + ".xml")
+        xml = xml_path.read_text(encoding="utf-8-sig", errors="replace") if xml_path.is_file() else ""
+        results[path.name] = (normalize_text(text), boxes, xml)
     return results
 
 
@@ -379,6 +384,50 @@ def _audit_and_repair(images: list[Path], texts: dict[str, str], boxes_by_name: 
 
 
 
+def _structure(book: Path, title: str, images: list[Path], boxes_by_name: dict[str, list[dict]],
+               texts: dict[str, str], cache_dir: Path, output: Path, replacements: dict[str, str],
+               running: set[str], opts: OCROptions, stop: threading.Event,
+               status: Callable[[str], None]):
+    """Structured Markdown. Advisory like the audit: a failure falls back to the page-by-page file."""
+    from .structure import build_book
+    from .textfix import load_glossary, render_fix_log
+    xml = {}
+    if opts.engine == "NDLOCR-Lite":
+        for p in images:
+            x = cache_dir / f"{p.stem}.ndl.xml"
+            if x.is_file():
+                xml[p.name] = x.read_text(encoding="utf-8")
+    status("表・図・見出しを構造化しています")
+    try:
+        res = build_book(title, images, boxes_by_name, xml, output, replacements=replacements,
+                         glossary=load_glossary(book / "glossary.txt"), running=running,
+                         numbers=opts.number_check, stop=stop, status=status, texts=texts)
+    except InterruptedError:
+        raise
+    except Exception as exc:  # never lose the conversion because of the structuring step
+        status(f"構造化をスキップしました（ページ順の全文.mdを出力）: {exc}")
+        return None
+    (output / "自動補正ログ.md").write_text(render_fix_log(title, res.fixes), encoding="utf-8")
+    replaced = sum(1 for c in res.numchecks if c.action == "置換")
+    status(f"構造化: 表{res.tables}・図{res.figures}（output/tables, output/figures）"
+           f"、数値の読み直しで{replaced}箇所修正、自動補正{len(res.fixes)}件（output/自動補正ログ.md）")
+    return res
+
+
+def render_numchecks(checks) -> str:
+    out = ["", "## 表・短い数値の読み直し（Tesseractで再確認）", "",
+           "NDLOCR-Liteは表の中の短い数字を取り違えることがあるため（8→00、-1→11など）、数字だけの行を"
+           "Tesseractで読み直しました。「置換」は全文.mdに反映済み、「要確認」は原本と照合してください。", ""]
+    last = None
+    for c in checks:
+        if c.page != last:
+            out += ["", f"### {c.page}", ""]
+            last = c.page
+        note = f"（{c.note}）" if c.note else ""
+        out.append(f"- [{c.action}] `{c.old}` → `{c.new}`（信頼度{c.conf:.0f}）{note}")
+    return "\n".join(out).rstrip() + "\n"
+
+
 def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event,
                  status: Callable[[str], None]) -> int:
     book = Path(book)
@@ -430,6 +479,8 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
                            "trim": opts.trim if opts.engine == "Tesseract" else False,
                            "reread": opts.reread_low_conf if opts.engine == "Tesseract" else False,
                            "v": 2,  # 2: Tesseract boxes are cached and drive the searchable PDF
+                           # NDLOCR-Lite's layout XML (表組/図版/柱/ノンブル, reading order) is cached too.
+                           **({"layout": 1} if opts.engine == "NDLOCR-Lite" else {}),
                            "native": bool(opts.prefer_native_pdf and path.name in native_texts)}, sort_keys=True)
 
     keys = {p.name: cache_key(p) for p in images}
@@ -465,8 +516,10 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
         for i, path in enumerate(pending, 1):
             if stop.is_set():
                 raise InterruptedError("OCRを停止しました。")
-            raw, boxes = results[path.name]
+            raw, boxes, xml = results[path.name]
             (cache_dir / f"{path.stem}.txt").write_text(raw, encoding="utf-8")
+            if xml:
+                (cache_dir / f"{path.stem}.ndl.xml").write_text(xml, encoding="utf-8")
             new_text[path.name] = raw
             boxes_by_name[path.name] = boxes
             new_entries[path.name] = {"key": keys[path.name], "boxes": boxes}
@@ -505,6 +558,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
         text_path.write_text(corrected + "\n", encoding="utf-8")
         assembled.append((path.name, corrected))
     notes: dict[str, list[str]] = {}
+    running: set[str] = set()
     if opts.clean_text:
         cleaned, note_lists, running = clean_pages([t for _, t in assembled])
         assembled = [(n, c) for (n, _), c in zip(assembled, cleaned)]
@@ -513,10 +567,22 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
             (text_dir / f"{path.stem}.txt").write_text(body + "\n", encoding="utf-8")
         if running:
             status(f"繰り返し行（柱・版権表記など）{len(running)}種類を本文から除外")
-    (output / "全文.md").write_text(render_markdown(title, assembled, notes), encoding="utf-8")
+    page_md = render_markdown(title, assembled, notes)
+    structured = None
+    if opts.structure:
+        structured = _structure(book, title, images, boxes_by_name, new_text, cache_dir, output,
+                                replacements, running, opts, stop, status)
+    if structured is not None:
+        (output / "全文.md").write_text(structured.markdown, encoding="utf-8")
+        (output / "全文_ページ順.md").write_text(page_md, encoding="utf-8")
+    else:
+        (output / "全文.md").write_text(page_md, encoding="utf-8")
     (output / "全文.txt").write_text("\n\n".join(t for _, t in assembled) + "\n", encoding="utf-8")
     flagged = review_lines(assembled)
-    (output / "要確認.md").write_text(render_review(title, flagged), encoding="utf-8")
+    review = render_review(title, flagged)
+    if structured is not None and structured.numchecks:
+        review += render_numchecks(structured.numchecks)
+    (output / "要確認.md").write_text(review, encoding="utf-8")
     status(f"数値・単位を含む要確認行: {len(flagged)}行（output/要確認.md）")
     if audits or repairs:
         try:
@@ -528,5 +594,7 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     status("検索可能PDFを作成中")
     _write_searchable_boxes(images, boxes_by_name, output / "検索可能PDF.pdf", stop, status)
     save_manifest(book, {"ocr_engine": opts.engine, "ocr_count": len(images),
-                         "output_files": ["output/全文.md", "output/全文.txt", "output/画像PDF.pdf", "output/検索可能PDF.pdf"]})
+                         "output_files": ["output/全文.md", "output/全文.txt", "output/画像PDF.pdf", "output/検索可能PDF.pdf"]
+                         + (["output/全文_ページ順.md", "output/tables/", "output/figures/", "output/自動補正ログ.md"]
+                            if structured is not None else [])})
     return len(images)

@@ -161,6 +161,8 @@ class App(tk.Tk):
         self.reread_var = tk.BooleanVar(value=True)
         self.audit_var = tk.BooleanVar(value=True)
         self.repair_var = tk.BooleanVar(value=True)
+        self.structure_var = tk.BooleanVar(value=True)
+        self.numcheck_var = tk.BooleanVar(value=True)
         self.native_var = tk.BooleanVar(value=True)
         self.preprocess_var = tk.BooleanVar(value=True)
         self.upscale_var = tk.BooleanVar(value=True)
@@ -268,6 +270,11 @@ class App(tk.Tk):
         ttk.Checkbutton(flags, text="低信頼の行を再読み", variable=self.reread_var).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(flags, text="OCR抜けを確認", variable=self.audit_var).pack(side="left", padx=(0, 16))
         ttk.Checkbutton(flags, text="抜けを読み直して補う", variable=self.repair_var).pack(side="left")
+        flags2 = ttk.Frame(ocr)
+        flags2.pack(fill="x", pady=(0, 8))
+        ttk.Checkbutton(flags2, text="表・図・見出しを構造化したMarkdownにする（表は表として、図は画像として保存）",
+                        variable=self.structure_var).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(flags2, text="表の数値をTesseractで再確認", variable=self.numcheck_var).pack(side="left")
         run = ttk.Frame(ocr)
         run.pack(fill="x")
         self.ocr_btn = ttk.Button(run, text="▶ OCR / Markdown / PDF を生成", command=self.start_ocr,
@@ -441,7 +448,8 @@ class App(tk.Tk):
                               trim=self.trim_var.get(), preprocess=self.preprocess_var.get(),
                               upscale=self.upscale_var.get(), prefer_native_pdf=self.native_var.get(),
                               ndl_command=self.ndl_var.get(), clean_text=self.clean_var.get(), reread_low_conf=self.reread_var.get(),
-                              audit=self.audit_var.get(), repair=self.repair_var.get())
+                              audit=self.audit_var.get(), repair=self.repair_var.get(),
+                              structure=self.structure_var.get(), number_check=self.numcheck_var.get())
         except (ValueError, OSError) as exc:
             messagebox.showerror("設定", str(exc))
             return
