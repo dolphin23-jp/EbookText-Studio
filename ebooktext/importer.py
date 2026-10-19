@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from pathlib import Path
 from shutil import copy2
 from typing import Callable
@@ -102,5 +104,57 @@ def import_pdf(book: Path, file: Path, progress: Callable[[str], None], dpi: int
     (Path(book) / "native_text.json").write_text(json.dumps(native_text, ensure_ascii=False, indent=2), encoding="utf-8")
     save_manifest(book, {"source": "pdf", "source_pdf_filename": file.name, "source_pdf_pages": count,
                          "images": n - 1, "native_text_pages": len(native_text),
+                         "import_options": _opts_dict(opts)})
+    return n - 1
+
+
+def natural_key(path: Path) -> list:
+    """Sort key that reads digits as numbers (第2章 before 第10章), full-width digits included."""
+    text = unicodedata.normalize("NFKC", str(path)).lower()
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", text)]
+
+
+def find_pdfs(folder: Path) -> list[Path]:
+    """All PDFs in a folder tree, in natural path order (chapter folders come out in chapter order)."""
+    folder = Path(folder)
+    return sorted((p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"
+                   and not p.name.startswith(("~", "."))), key=lambda p: natural_key(p.relative_to(folder)))
+
+
+def import_pdfs(book: Path, files: list[Path], progress: Callable[[str], None], dpi: int = 180,
+                opts: ImportOptions | None = None) -> int:
+    """Import several PDFs (for example one per chapter) into one book, in the given order."""
+    import fitz
+
+    opts = opts or ImportOptions()
+    files = [Path(f) for f in files]
+    if not files:
+        raise ValueError("取り込むPDFがありません。")
+    dst_dir = Path(book) / "pages"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    if page_images(dst_dir):
+        raise ValueError("プロジェクトに既に画像があります。新しい書名で取り込んでください。")
+    native_text: dict[str, str] = {}
+    sources = []
+    n = 1
+    for k, file in enumerate(files, 1):
+        first = n
+        with fitz.open(file) as doc:
+            if doc.needs_pass:
+                raise ValueError(f"パスワードで保護されたPDFは取り込めません: {file.name}")
+            count = len(doc)
+            for i, page in enumerate(doc, 1):
+                native = page.get_text("text", sort=True).strip()
+                pages = prepare_page(_page_image(doc, page, dpi), opts)
+                head = n
+                n = _save_pages(pages, dst_dir, n)
+                if len(native) > 40 and len(pages) == 1:
+                    native_text[f"page_{head:05d}.png"] = native
+                progress(f"PDF取り込み: {k}/{len(files)}冊目 {i}/{count}ページ")
+        sources.append({"file": file.name, "pdf_pages": count, "first_image": first, "last_image": n - 1})
+    (Path(book) / "native_text.json").write_text(json.dumps(native_text, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_manifest(book, {"source": "pdf", "source_pdf_filename": ", ".join(f.name for f in files),
+                         "source_pdf_pages": sum(x["pdf_pages"] for x in sources),
+                         "source_pdfs": sources, "images": n - 1, "native_text_pages": len(native_text),
                          "import_options": _opts_dict(opts)})
     return n - 1
