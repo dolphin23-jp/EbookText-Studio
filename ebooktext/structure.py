@@ -327,7 +327,9 @@ def analyze_page(image: Image.Image, lines: list[Line], name: str, ndl: NdlPage 
             continue
         if any(inside(rect, f.rect, 0.5) for f in figures):
             continue
-        inner = [l for l in lines if center_in(l.rect, rect)]
+        inner = [l for l in lines if center_in(l.rect, rect) and not _PAGE_NO.match(l.text.strip())]
+        if len(inner) < 2 and _edge_density(g, rect) < 0.02:
+            continue           # a flat tinted area (page background band), nothing drawn in it
         if _text_box(inner, rect, body_h):
             continue
         if inner and sum(l.w > 0.75 * (col_x1 - col_x0) for l in inner) >= 0.5 * len(inner):
@@ -444,6 +446,17 @@ def figure_text(image: Image.Image, rect: Rect, have: list[Line], min_conf: floa
             continue
         out.append(Line(text, *bx))
     return out
+
+
+def _edge_density(g: np.ndarray, rect: Rect) -> float:
+    """Share of pixels on a visible edge inside rect: near 0 for a plain coloured fill."""
+    x0, y0, x1, y1 = (int(max(0, rect[0])), int(max(0, rect[1])),
+                      int(min(g.shape[1], rect[2])), int(min(g.shape[0], rect[3])))
+    if x1 - x0 < 3 or y1 - y0 < 3:
+        return 0.0
+    a = g[y0:y1, x0:x1]
+    edges = (np.abs(np.diff(a, axis=1))[:-1, :] > 30) | (np.abs(np.diff(a, axis=0))[:, :-1] > 30)
+    return float(edges.mean())
 
 
 def _plausible_table(t: T.Table, lines: list[Line]) -> bool:

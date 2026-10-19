@@ -3,6 +3,8 @@
 Examples:
   python cli.py one --input "C:/Books/screenshots" --base "C:/EbookText" --title "腎臓内科学"
   python cli.py batch --input "C:/Books/to_process" --base "C:/EbookText"
+  python cli.py bundle --input "C:/EbookText/腎臓内科学"            # 作成済みの出力を1ファイルに
+  python cli.py bundle --input "C:/EbookText/腎臓内科学" --mode embed  # 画像も埋め込む
 """
 from __future__ import annotations
 
@@ -34,9 +36,13 @@ def process_one(src: Path, base: Path, title: str, opts: OCROptions,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='EbookText Studio CLI / image folder or PDF to Markdown + PDF')
-    parser.add_argument('action', choices=['one', 'batch'])
-    parser.add_argument('--input', required=True, type=Path, help='one: image folder/PDF; batch: folder containing subfolders/PDFs')
-    parser.add_argument('--base', required=True, type=Path, help='book project destination base directory')
+    parser.add_argument('action', choices=['one', 'batch', 'bundle'])
+    parser.add_argument('--input', required=True, type=Path,
+                        help='one: image folder/PDF; batch: folder containing subfolders/PDFs; bundle: book folder (or its output)')
+    parser.add_argument('--base', type=Path, help='book project destination base directory (one / batch)')
+    parser.add_argument('--mode', choices=['text', 'embed'], default='text',
+                        help='bundle: text = text only for AI/RAG, embed = images inside the file')
+    parser.add_argument('--no-bundle', action='store_true', help='do not write the one-file <title>.md after OCR')
     parser.add_argument('--title', help='book title (required for one)')
     parser.add_argument('--engine', choices=['Tesseract', 'NDLOCR-Lite'], default=None,
                         help='default: NDLOCR-Lite when installed (setup.bat), otherwise Tesseract')
@@ -53,12 +59,20 @@ def main() -> int:
     parser.add_argument('--no-structure', action='store_true', help='page-by-page 全文.md without tables/figures/headings')
     parser.add_argument('--no-numcheck', action='store_true', help='do not re-read short numbers with Tesseract')
     args = parser.parse_args()
+    if args.action == 'bundle':
+        from ebooktext.bundle import bundle_book, describe
+        out = args.input if (args.input / '全文.md').is_file() else args.input / 'output'
+        print(describe(bundle_book(out, args.mode)))
+        return 0
+    if args.base is None:
+        parser.error('--base is required for one / batch')
     engine = args.engine or ('NDLOCR-Lite' if ndl_available() else 'Tesseract')
     print(f'OCRエンジン: {engine}')
     opts = OCROptions(engine=engine, lang=args.lang, psm=args.psm,
                       ndl_command=args.ndl_command, prefer_native_pdf=not args.no_native,
                       clean_text=not args.no_clean, reread_low_conf=not args.no_reread, workers=args.workers,
-                      structure=not args.no_structure, number_check=not args.no_numcheck)
+                      structure=not args.no_structure, number_check=not args.no_numcheck,
+                      bundle=not args.no_bundle)
     imp = ImportOptions(strip_bars=not args.no_strip_bars, split_spreads=not args.no_split,
                         right_to_left=args.rtl)
     if args.action == 'one':
