@@ -14,6 +14,7 @@ from ebooktext import __version__
 from ebooktext.capture import CaptureOptions, KEYS, run_capture
 from ebooktext.core import project_dir
 from ebooktext.importer import find_pdfs, import_images, import_pdf, import_pdfs
+from ebooktext.bundle import bundle_book, describe as describe_bundle
 from ebooktext.ocr import OCROptions, convert_book, ndl_available
 from ebooktext.pageprep import ImportOptions
 from ebooktext.scrollcapture import SCROLL_METHODS, ScrollOptions, run_scroll_capture
@@ -25,6 +26,8 @@ SUBTLE = "#e8eff7"
 DEFAULT_DIR = Path.home() / "Documents" / "EbookTextStudio"
 MODE_PAGES = "ページ送り（従来）"
 MODE_SCROLL = "連続スクロール"
+BUNDLE_TEXT = "文字のみ（AI・RAG向け、推奨）"
+BUNDLE_EMBED = "画像も埋め込む（閲覧アプリ向け）"
 
 
 def set_windows_dpi_awareness():
@@ -163,6 +166,8 @@ class App(tk.Tk):
         self.repair_var = tk.BooleanVar(value=True)
         self.structure_var = tk.BooleanVar(value=True)
         self.numcheck_var = tk.BooleanVar(value=True)
+        self.bundle_var = tk.BooleanVar(value=True)
+        self.bundle_mode_var = tk.StringVar(value=BUNDLE_TEXT)
         self.native_var = tk.BooleanVar(value=True)
         self.preprocess_var = tk.BooleanVar(value=True)
         self.upscale_var = tk.BooleanVar(value=True)
@@ -274,7 +279,15 @@ class App(tk.Tk):
         flags2.pack(fill="x", pady=(0, 8))
         ttk.Checkbutton(flags2, text="表・図・見出しを構造化したMarkdownにする（表は表として、図は画像として保存）",
                         variable=self.structure_var).pack(side="left", padx=(0, 16))
-        ttk.Checkbutton(flags2, text="表の数値をTesseractで再確認", variable=self.numcheck_var).pack(side="left")
+        ttk.Checkbutton(flags2, text="表の数値をTesseractで再確認", variable=self.numcheck_var).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(flags2, text="1ファイル版（文字のみ）も作る", variable=self.bundle_var).pack(side="left")
+        one = ttk.Frame(ocr)
+        one.pack(fill="x", pady=(0, 8))
+        ttk.Label(one, text="1ファイル化（作成済みの出力から、OCRなし）:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(one, textvariable=self.bundle_mode_var, state="readonly", width=26,
+                     values=[BUNDLE_TEXT, BUNDLE_EMBED]).pack(side="left", padx=(0, 8))
+        self.bundle_btn = ttk.Button(one, text="全文と画像を1ファイルにまとめる", command=self.start_bundle)
+        self.bundle_btn.pack(side="left")
         run = ttk.Frame(ocr)
         run.pack(fill="x")
         self.ocr_btn = ttk.Button(run, text="▶ OCR / Markdown / PDF を生成", command=self.start_ocr,
@@ -334,7 +347,7 @@ class App(tk.Tk):
     def set_busy(self, busy: bool):
         self.busy = busy
         enable = "disabled" if busy else "normal"
-        for btn in (self.region_btn, self.start_btn, self.images_btn, self.pdf_btn, self.ocr_btn):
+        for btn in (self.region_btn, self.start_btn, self.images_btn, self.pdf_btn, self.ocr_btn, self.bundle_btn):
             btn.configure(state=enable)
         self.stop_btn.configure(state="normal" if busy else "disabled")
 
@@ -350,7 +363,7 @@ class App(tk.Tk):
         def do_work():
             try:
                 count = worker()
-                self.events.put(("done", f"完了: {count} ページ処理しました。"))
+                self.events.put(("done", count if isinstance(count, str) else f"完了: {count} ページ処理しました。"))
             except InterruptedError as exc:
                 self.events.put(("done", str(exc)))
             except Exception as exc:
@@ -449,12 +462,22 @@ class App(tk.Tk):
                               upscale=self.upscale_var.get(), prefer_native_pdf=self.native_var.get(),
                               ndl_command=self.ndl_var.get(), clean_text=self.clean_var.get(), reread_low_conf=self.reread_var.get(),
                               audit=self.audit_var.get(), repair=self.repair_var.get(),
-                              structure=self.structure_var.get(), number_check=self.numcheck_var.get())
+                              structure=self.structure_var.get(), number_check=self.numcheck_var.get(),
+                              bundle=self.bundle_var.get())
         except (ValueError, OSError) as exc:
             messagebox.showerror("設定", str(exc))
             return
         self.launch("OCR処理を開始します。", lambda: convert_book(book, self.title_var.get(), opts,
                                                           self.stop_event, self.emit))
+
+    def start_bundle(self):
+        try:
+            output = self.book() / "output"
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("設定", str(exc))
+            return
+        mode = "embed" if self.bundle_mode_var.get() == BUNDLE_EMBED else "text"
+        self.launch("1ファイルにまとめています。", lambda: describe_bundle(bundle_book(output, mode)))
 
     def stop(self):
         self.stop_event.set()

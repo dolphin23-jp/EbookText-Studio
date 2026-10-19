@@ -47,6 +47,7 @@ class OCROptions:
     repair: bool = True       # re-read the spots the audit flagged and merge them into the text
     structure: bool = True    # 全文.md with headings, real tables and figures (structure.py)
     number_check: bool = True  # re-read short numbers (table cells) with Tesseract
+    bundle: bool = True       # also write <書籍名>.md: one self-contained, text-only file (bundle.py)
 
 
 def _find_tesseract(explicit: str = "") -> str:
@@ -575,6 +576,12 @@ def convert_book(book: Path, title: str, opts: OCROptions, stop: threading.Event
     if structured is not None:
         (output / "全文.md").write_text(structured.markdown, encoding="utf-8")
         (output / "全文_ページ順.md").write_text(page_md, encoding="utf-8")
+        if opts.bundle:
+            from .bundle import bundle_book, describe
+            try:
+                status(describe(bundle_book(output, "text")))
+            except (OSError, ValueError) as exc:
+                status(f"1ファイル版の作成をスキップしました: {exc}")
     else:
         (output / "全文.md").write_text(page_md, encoding="utf-8")
     (output / "全文.txt").write_text("\n\n".join(t for _, t in assembled) + "\n", encoding="utf-8")
